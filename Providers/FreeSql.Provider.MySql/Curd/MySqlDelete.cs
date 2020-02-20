@@ -27,12 +27,12 @@ namespace FreeSql.MySql.Curd
             foreach (var col in _table.Columns.Values)
             {
                 if (colidx > 0) sb.Append(", ");
-                sb.Append(_commonUtils.QuoteReadColumn(col.Attribute.MapType, _commonUtils.QuoteSqlName(col.Attribute.Name))).Append(" as ").Append(_commonUtils.QuoteSqlName(col.CsName));
+                sb.Append(_commonUtils.QuoteReadColumn(col.CsType, col.Attribute.MapType, _commonUtils.QuoteSqlName(col.Attribute.Name))).Append(" as ").Append(_commonUtils.QuoteSqlName(col.CsName));
                 ++colidx;
             }
             sql = sb.ToString();
             var dbParms = _params.ToArray();
-            var before = new Aop.CurdBeforeEventArgs(_table.Type, Aop.CurdType.Delete, sql, dbParms);
+            var before = new Aop.CurdBeforeEventArgs(_table.Type, _table, Aop.CurdType.Delete, sql, dbParms);
             _orm.Aop.CurdBefore?.Invoke(this, before);
             var ret = new List<T1>();
             Exception exception = null;
@@ -53,6 +53,9 @@ namespace FreeSql.MySql.Curd
             this.ClearData();
             return ret;
         }
+
+#if net40
+#else
         async public override Task<List<T1>> ExecuteDeletedAsync()
         {
             var sql = this.ToSql();
@@ -65,12 +68,12 @@ namespace FreeSql.MySql.Curd
             foreach (var col in _table.Columns.Values)
             {
                 if (colidx > 0) sb.Append(", ");
-                sb.Append(_commonUtils.QuoteReadColumn(col.Attribute.MapType, _commonUtils.QuoteSqlName(col.Attribute.Name))).Append(" as ").Append(_commonUtils.QuoteSqlName(col.CsName));
+                sb.Append(_commonUtils.QuoteReadColumn(col.CsType, col.Attribute.MapType, _commonUtils.QuoteSqlName(col.Attribute.Name))).Append(" as ").Append(_commonUtils.QuoteSqlName(col.CsName));
                 ++colidx;
             }
             sql = sb.ToString();
             var dbParms = _params.ToArray();
-            var before = new Aop.CurdBeforeEventArgs(_table.Type, Aop.CurdType.Delete, sql, dbParms);
+            var before = new Aop.CurdBeforeEventArgs(_table.Type, _table, Aop.CurdType.Delete, sql, dbParms);
             _orm.Aop.CurdBefore?.Invoke(this, before);
             var ret = new List<T1>();
             Exception exception = null;
@@ -91,5 +94,6 @@ namespace FreeSql.MySql.Curd
             this.ClearData();
             return ret;
         }
+#endif
     }
 }

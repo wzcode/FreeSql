@@ -19,12 +19,9 @@ namespace FreeSql.Oracle.Curd
         {
         }
 
-        public override int ExecuteAffrows() => base.SplitExecuteAffrows(500, 999);
-        public override Task<int> ExecuteAffrowsAsync() => base.SplitExecuteAffrowsAsync(500, 999);
-        public override long ExecuteIdentity() => base.SplitExecuteIdentity(500, 999);
-        public override Task<long> ExecuteIdentityAsync() => base.SplitExecuteIdentityAsync(500, 999);
-        public override List<T1> ExecuteInserted() => base.SplitExecuteInserted(500, 999);
-        public override Task<List<T1>> ExecuteInsertedAsync() => base.SplitExecuteInsertedAsync(500, 999);
+        public override int ExecuteAffrows() => base.SplitExecuteAffrows(_batchValuesLimit > 0 ? _batchValuesLimit : 500, _batchParameterLimit > 0 ? _batchParameterLimit : 999);
+        public override long ExecuteIdentity() => base.SplitExecuteIdentity(_batchValuesLimit > 0 ? _batchValuesLimit : 500, _batchParameterLimit > 0 ? _batchParameterLimit : 999);
+        public override List<T1> ExecuteInserted() => base.SplitExecuteInserted(_batchValuesLimit > 0 ? _batchValuesLimit : 500, _batchParameterLimit > 0 ? _batchParameterLimit : 999);
 
 
         public override string ToSql()
@@ -42,8 +39,8 @@ namespace FreeSql.Oracle.Curd
             foreach (var col in _table.Columns.Values)
             {
                 if (col.Attribute.IsIdentity) _identCol = col;
-                if (_ignore.ContainsKey(col.Attribute.Name)) continue;
                 if (col.Attribute.IsIdentity && _insertIdentity == false) continue;
+                if (col.Attribute.IsIdentity == false && _ignore.ContainsKey(col.Attribute.Name)) continue;
 
                 if (colidx > 0) sbtb.Append(", ");
                 sbtb.Append(_commonUtils.QuoteSqlName(col.Attribute.Name));
@@ -63,17 +60,22 @@ namespace FreeSql.Oracle.Curd
                 var colidx2 = 0;
                 foreach (var col in _table.Columns.Values)
                 {
-                    if (_ignore.ContainsKey(col.Attribute.Name)) continue;
                     if (col.Attribute.IsIdentity && _insertIdentity == false) continue;
+                    if (col.Attribute.IsIdentity == false && _ignore.ContainsKey(col.Attribute.Name)) continue;
 
                     if (colidx2 > 0) sb.Append(", ");
-                    object val = col.GetMapValue(d);
-                    if (_noneParameter)
-                        sb.Append(_commonUtils.GetNoneParamaterSqlValue(specialParams, col.Attribute.MapType, val));
+                    if (string.IsNullOrEmpty(col.DbInsertValue) == false)
+                        sb.Append(col.DbInsertValue);
                     else
                     {
-                        sb.Append(_commonUtils.QuoteWriteParamter(col.Attribute.MapType, _commonUtils.QuoteParamterName($"{col.CsName}_{didx}")));
-                        _params[didx * colidx + colidx2] = _commonUtils.AppendParamter(null, $"{col.CsName}_{didx}", col.Attribute.MapType, val);
+                        object val = col.GetMapValue(d);
+                        if (_noneParameter)
+                            sb.Append(_commonUtils.GetNoneParamaterSqlValue(specialParams, col.Attribute.MapType, val));
+                        else
+                        {
+                            sb.Append(_commonUtils.QuoteWriteParamter(col.Attribute.MapType, _commonUtils.QuoteParamterName($"{col.CsName}_{didx}")));
+                            _params[didx * colidx + colidx2] = _commonUtils.AppendParamter(null, $"{col.CsName}_{didx}", col, col.Attribute.MapType, val);
+                        }
                     }
                     ++colidx2;
                 }
@@ -96,7 +98,7 @@ namespace FreeSql.Oracle.Curd
 
             if (_identCol == null || _source.Count > 1)
             {
-                before = new Aop.CurdBeforeEventArgs(_table.Type, Aop.CurdType.Insert, sql, _params);
+                before = new Aop.CurdBeforeEventArgs(_table.Type, _table, Aop.CurdType.Insert, sql, _params);
                 _orm.Aop.CurdBefore?.Invoke(this, before);
                 try
                 {
@@ -115,11 +117,11 @@ namespace FreeSql.Oracle.Curd
                 return 0;
             }
             var identColName = _commonUtils.QuoteSqlName(_identCol.Attribute.Name);
-            var identParam = _commonUtils.AppendParamter(null, $"{_identCol.CsName}99", _identCol.Attribute.MapType, 0) as OracleParameter;
+            var identParam = _commonUtils.AppendParamter(null, $"{_identCol.CsName}99", _identCol, _identCol.Attribute.MapType, 0) as OracleParameter;
             identParam.Direction = ParameterDirection.Output;
             sql = $"{sql} RETURNING {identColName} INTO {identParam.ParameterName}";
             var dbParms = _params.Concat(new[] { identParam }).ToArray();
-            before = new Aop.CurdBeforeEventArgs(_table.Type, Aop.CurdType.Insert, sql, dbParms);
+            before = new Aop.CurdBeforeEventArgs(_table.Type, _table, Aop.CurdType.Insert, sql, dbParms);
             _orm.Aop.CurdBefore?.Invoke(this, before);
             try
             {
@@ -138,6 +140,22 @@ namespace FreeSql.Oracle.Curd
             }
             return ret;
         }
+        protected override List<T1> RawExecuteInserted()
+        {
+            var sql = this.ToSql();
+            if (string.IsNullOrEmpty(sql)) return new List<T1>();
+
+            var ret = _source.ToList();
+            this.RawExecuteAffrows();
+            return ret;
+        }
+
+#if net40
+#else
+        public override Task<int> ExecuteAffrowsAsync() => base.SplitExecuteAffrowsAsync(500, 999);
+        public override Task<long> ExecuteIdentityAsync() => base.SplitExecuteIdentityAsync(500, 999);
+        public override Task<List<T1>> ExecuteInsertedAsync() => base.SplitExecuteInsertedAsync(500, 999);
+
         async protected override Task<long> RawExecuteIdentityAsync()
         {
             var sql = this.ToSql();
@@ -149,7 +167,7 @@ namespace FreeSql.Oracle.Curd
 
             if (_identCol == null || _source.Count > 1)
             {
-                before = new Aop.CurdBeforeEventArgs(_table.Type, Aop.CurdType.Insert, sql, _params);
+                before = new Aop.CurdBeforeEventArgs(_table.Type, _table, Aop.CurdType.Insert, sql, _params);
                 _orm.Aop.CurdBefore?.Invoke(this, before);
                 try
                 {
@@ -168,11 +186,11 @@ namespace FreeSql.Oracle.Curd
                 return 0;
             }
             var identColName = _commonUtils.QuoteSqlName(_identCol.Attribute.Name);
-            var identParam = _commonUtils.AppendParamter(null, $"{_identCol.CsName}99", _identCol.Attribute.MapType, 0) as OracleParameter;
+            var identParam = _commonUtils.AppendParamter(null, $"{_identCol.CsName}99", _identCol, _identCol.Attribute.MapType, 0) as OracleParameter;
             identParam.Direction = ParameterDirection.Output;
             sql = $"{sql} RETURNING {identColName} INTO {identParam.ParameterName}";
             var dbParms = _params.Concat(new[] { identParam }).ToArray();
-            before = new Aop.CurdBeforeEventArgs(_table.Type, Aop.CurdType.Insert, sql, dbParms);
+            before = new Aop.CurdBeforeEventArgs(_table.Type, _table, Aop.CurdType.Insert, sql, dbParms);
             _orm.Aop.CurdBefore?.Invoke(this, before);
             try
             {
@@ -191,22 +209,15 @@ namespace FreeSql.Oracle.Curd
             }
             return ret;
         }
-
-        protected override List<T1> RawExecuteInserted()
-        {
-            var sql = this.ToSql();
-            if (string.IsNullOrEmpty(sql)) return new List<T1>();
-
-            this.RawExecuteAffrows();
-            return _source;
-        }
         async protected override Task<List<T1>> RawExecuteInsertedAsync()
         {
             var sql = this.ToSql();
             if (string.IsNullOrEmpty(sql)) return new List<T1>();
 
+            var ret = _source.ToList();
             await this.RawExecuteAffrowsAsync();
-            return _source;
+            return ret;
         }
+#endif
     }
 }

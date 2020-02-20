@@ -7,10 +7,12 @@ using NpgsqlTypes;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Data;
 using System.Data.Common;
 using System.Linq.Expressions;
 using System.Net;
 using System.Net.NetworkInformation;
+using System.Threading;
 
 namespace FreeSql.PostgreSQL
 {
@@ -69,6 +71,7 @@ namespace FreeSql.PostgreSQL
         public IInsert<T1> Insert<T1>() where T1 : class => new PostgreSQLInsert<T1>(this, this.InternalCommonUtils, this.InternalCommonExpression);
         public IInsert<T1> Insert<T1>(T1 source) where T1 : class => this.Insert<T1>().AppendData(source);
         public IInsert<T1> Insert<T1>(T1[] source) where T1 : class => this.Insert<T1>().AppendData(source);
+        public IInsert<T1> Insert<T1>(List<T1> source) where T1 : class => this.Insert<T1>().AppendData(source);
         public IInsert<T1> Insert<T1>(IEnumerable<T1> source) where T1 : class => this.Insert<T1>().AppendData(source);
         public IUpdate<T1> Update<T1>() where T1 : class => new PostgreSQLUpdate<T1>(this, this.InternalCommonUtils, this.InternalCommonExpression, null);
         public IUpdate<T1> Update<T1>(object dywhere) where T1 : class => new PostgreSQLUpdate<T1>(this, this.InternalCommonUtils, this.InternalCommonExpression, dywhere);
@@ -79,12 +82,12 @@ namespace FreeSql.PostgreSQL
         public IAop Aop { get; }
         public ICodeFirst CodeFirst { get; }
         public IDbFirst DbFirst { get; }
-        public PostgreSQLProvider(string masterConnectionString, string[] slaveConnectionString)
+        public PostgreSQLProvider(string masterConnectionString, string[] slaveConnectionString, Func<DbConnection> connectionFactory = null)
         {
             this.InternalCommonUtils = new PostgreSQLUtils(this);
             this.InternalCommonExpression = new PostgreSQLExpression(this.InternalCommonUtils);
 
-            this.Ado = new PostgreSQLAdo(this.InternalCommonUtils, masterConnectionString, slaveConnectionString);
+            this.Ado = new PostgreSQLAdo(this.InternalCommonUtils, masterConnectionString, slaveConnectionString, connectionFactory);
             this.Aop = new AopProvider();
 
             this.DbFirst = new PostgreSQLDbFirst(this, this.InternalCommonUtils, this.InternalCommonExpression);
@@ -95,17 +98,16 @@ namespace FreeSql.PostgreSQL
         internal CommonExpression InternalCommonExpression { get; }
 
         public void Transaction(Action handler) => Ado.Transaction(handler);
+        public void Transaction(TimeSpan timeout, Action handler) => Ado.Transaction(timeout, handler);
+        public void Transaction(IsolationLevel isolationLevel, TimeSpan timeout, Action handler) => Ado.Transaction(isolationLevel, timeout, handler);
 
-        public void Transaction(Action handler, TimeSpan timeout) => Ado.Transaction(handler, timeout);
+        public GlobalFilter GlobalFilter { get; } = new GlobalFilter();
 
-        ~PostgreSQLProvider()
-        {
-            this.Dispose();
-        }
-        bool _isdisposed = false;
+        ~PostgreSQLProvider() => this.Dispose();
+        int _disposeCounter;
         public void Dispose()
         {
-            if (_isdisposed) return;
+            if (Interlocked.Increment(ref _disposeCounter) != 1) return;
             (this.Ado as AdoProvider)?.Dispose();
         }
     }

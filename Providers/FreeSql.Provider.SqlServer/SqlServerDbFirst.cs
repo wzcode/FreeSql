@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace FreeSql.SqlServer
@@ -132,32 +133,29 @@ select
  a.Object_id
 ,b.name 'Owner'
 ,a.name 'Name'
-,c.value
+,(select value from sys.extended_properties where major_id = a.object_id AND minor_id = 0 AND name = 'MS_Description') 'Comment'
 ,'TABLE' type
 from sys.tables a
 inner join sys.schemas b on b.schema_id = a.schema_id
-left join sys.extended_properties AS c ON c.major_id = a.object_id AND c.minor_id = 0 AND c.name = 'MS_Description'
 where not(b.name = 'dbo' and a.name = 'sysdiagrams')
 union all
 select
  a.Object_id
 ,b.name 'Owner'
 ,a.name 'Name'
-,c.value
+,(select value from sys.extended_properties where major_id = a.object_id AND minor_id = 0 AND name = 'MS_Description') 'Comment'
 ,'VIEW' type
 from sys.views a
 inner join sys.schemas b on b.schema_id = a.schema_id
-left join sys.extended_properties AS c ON c.major_id = a.object_id AND c.minor_id = 0 AND c.name = 'MS_Description'
 union all
 select 
  a.Object_id
 ,b.name 'Owner'
 ,a.name 'Name'
-,c.value
+,(select value from sys.extended_properties where major_id = a.object_id AND minor_id = 0 AND name = 'MS_Description') 'Comment'
 ,'StoreProcedure' type
 from sys.procedures a
 inner join sys.schemas b on b.schema_id = a.schema_id
-left join sys.extended_properties AS c ON c.major_id = a.object_id AND c.minor_id = 0 AND c.name = 'MS_Description'
 where a.type = 'P' and charindex('diagram', a.name) = 0
 order by type desc, b.name, a.name
 ;
@@ -166,8 +164,10 @@ use [{olddatabase}];
                 var ds = _orm.Ado.ExecuteArray(CommandType.Text, sql);
                 if (ds == null) return loc1;
 
-                var loc6 = new List<int>();
-                var loc66 = new List<int>();
+                var loc6 = new List<int[]>();
+                var loc66 = new List<int[]>();
+                var loc6_1000 = new List<int>();
+                var loc66_1000 = new List<int>();
                 foreach (object[] row in ds)
                 {
                     int object_id = int.Parse(string.Concat(row[0]));
@@ -181,16 +181,47 @@ use [{olddatabase}];
                     {
                         case DbTableType.VIEW:
                         case DbTableType.TABLE:
-                            loc6.Add(object_id);
+                            loc6_1000.Add(object_id);
+                            if (loc6_1000.Count >= 500)
+                            {
+                                loc6.Add(loc6_1000.ToArray());
+                                loc6_1000.Clear();
+                            }
                             break;
                         case DbTableType.StoreProcedure:
-                            loc66.Add(object_id);
+                            loc66_1000.Add(object_id);
+                            if (loc66_1000.Count >= 500)
+                            {
+                                loc66.Add(loc66_1000.ToArray());
+                                loc66_1000.Clear();
+                            }
                             break;
                     }
                 }
+                if (loc6_1000.Count > 0) loc6.Add(loc6_1000.ToArray());
+                if (loc66_1000.Count > 0) loc66.Add(loc66_1000.ToArray());
+
                 if (loc6.Count == 0) return loc1;
-                var loc8 = string.Join(",", loc6.Select(a => string.Concat(a)));
-                var loc88 = string.Join(",", loc66.Select(a => string.Concat(a)));
+                Func<List<int[]>, StringBuilder> getloc8Sb = loclist =>
+                {
+                    if (loclist.Count == 0) return new StringBuilder();
+                    var loc8sb = new StringBuilder().Append("(");
+                    for (var loc8sbidx = 0; loc8sbidx < loclist.Count; loc8sbidx++)
+                    {
+                        if (loc8sbidx > 0) loc8sb.Append(" OR ");
+                        loc8sb.Append("a.table_name in (");
+                        for (var loc8sbidx2 = 0; loc8sbidx2 < loclist[loc8sbidx].Length; loc8sbidx2++)
+                        {
+                            if (loc8sbidx2 > 0) loc8sb.Append(",");
+                            loc8sb.Append(loclist[loc8sbidx][loc8sbidx2]);
+                        }
+                        loc8sb.Append(")");
+                    }
+                    loc8sb.Append(")");
+                    return loc8sb;
+                };
+                var loc8 = getloc8Sb(loc6);
+                var loc88 = getloc8Sb(loc66);
 
                 var tsql_place = @"
 
@@ -210,27 +241,26 @@ isnull(e.name,'') + '.' + isnull(d.name,'')
   else cast(a.max_length as varchar) end + ')'
  when b.name in ('Numeric', 'Decimal') then '(' + cast(a.precision as varchar) + ',' + cast(a.scale as varchar) + ')'
  else '' end as 'SqlType'
-,c.value
+,( select value from sys.extended_properties where major_id = a.object_id AND minor_id = a.column_id AND name = 'MS_Description') 'Comment'
 {0} a
 inner join sys.types b on b.user_type_id = a.user_type_id
-left join sys.extended_properties AS c ON c.major_id = a.object_id AND c.minor_id = a.column_id
 left join sys.tables d on d.object_id = a.object_id
 left join sys.schemas e on e.schema_id = d.schema_id
-where a.object_id in ({1})
+where {1}
 ";
                 sql = string.Format(tsql_place, @"
 ,a.is_nullable 'IsNullable'
 ,a.is_identity 'IsIdentity'
-from sys.columns", loc8);
+from sys.columns", loc8.ToString().Replace("a.table_name", "a.object_id"));
                 if (loc88.Length > 0)
                 {
                     sql += "union all" +
                     string.Format(tsql_place.Replace(
-                        "left join sys.extended_properties AS c ON c.major_id = a.object_id AND c.minor_id = a.column_id",
-                        "left join sys.extended_properties AS c ON c.major_id = a.object_id AND c.minor_id = a.parameter_id"), @"
+                        " select value from sys.extended_properties where major_id = a.object_id AND minor_id = a.column_id",
+                        " select value from sys.extended_properties where major_id = a.object_id AND minor_id = a.parameter_id"), @"
 ,cast(0 as bit) 'IsNullable'
 ,a.is_output 'IsIdentity'
-from sys.parameters", loc88);
+from sys.parameters", loc88.ToString().Replace("a.table_name", "a.object_id"));
                 }
                 sql = $"use [{db}];{sql};use [{olddatabase}]; ";
                 ds = _orm.Ado.ExecuteArray(CommandType.Text, sql);
@@ -270,24 +300,23 @@ use [{db}];
 select 
  a.object_id 'Object_id'
 ,c.name 'Column'
-,d.name 'Index_id'
+,b.name 'Index_id'
 ,b.is_unique 'IsUnique'
 ,b.is_primary_key 'IsPrimaryKey'
 ,cast(case when b.type_desc = 'CLUSTERED' then 1 else 0 end as bit) 'IsClustered'
-,case when a.is_descending_key = 1 then 2 when a.is_descending_key = 0 then 1 else 0 end 'IsDesc'
+,case when a.is_descending_key = 1 then 1 else 0 end 'IsDesc'
 from sys.index_columns a
 inner join sys.indexes b on b.object_id = a.object_id and b.index_id = a.index_id
 left join sys.columns c on c.object_id = a.object_id and c.column_id = a.column_id
-left join sys.key_constraints d on d.parent_object_id = b.object_id and d.unique_index_id = b.index_id
-where a.object_id in ({loc8})
+where {loc8.ToString().Replace("a.table_name", "a.object_id")}
 ;
 use [{olddatabase}];
 ";
                 ds = _orm.Ado.ExecuteArray(CommandType.Text, sql);
                 if (ds == null) return loc1;
 
-                var indexColumns = new Dictionary<int, Dictionary<string, List<DbColumnInfo>>>();
-                var uniqueColumns = new Dictionary<int, Dictionary<string, List<DbColumnInfo>>>();
+                var indexColumns = new Dictionary<int, Dictionary<string, DbIndexInfo>>();
+                var uniqueColumns = new Dictionary<int, Dictionary<string, DbIndexInfo>>();
                 foreach (object[] row in ds)
                 {
                     int object_id = int.Parse(string.Concat(row[0]));
@@ -296,26 +325,26 @@ use [{olddatabase}];
                     bool is_unique = bool.Parse(string.Concat(row[3]));
                     bool is_primary_key = bool.Parse(string.Concat(row[4]));
                     bool is_clustered = bool.Parse(string.Concat(row[5]));
-                    int is_desc = int.Parse(string.Concat(row[6]));
+                    bool is_desc = string.Concat(row[6]) == "1";
 
                     if (loc3.ContainsKey(object_id) == false || loc3[object_id].ContainsKey(column) == false) continue;
                     DbColumnInfo loc9 = loc3[object_id][column];
                     if (loc9.IsPrimary == false && is_primary_key) loc9.IsPrimary = is_primary_key;
 
-                    Dictionary<string, List<DbColumnInfo>> loc10 = null;
-                    List<DbColumnInfo> loc11 = null;
+                    Dictionary<string, DbIndexInfo> loc10 = null;
+                    DbIndexInfo loc11 = null;
                     if (!indexColumns.TryGetValue(object_id, out loc10))
-                        indexColumns.Add(object_id, loc10 = new Dictionary<string, List<DbColumnInfo>>());
+                        indexColumns.Add(object_id, loc10 = new Dictionary<string, DbIndexInfo>());
                     if (!loc10.TryGetValue(index_id, out loc11))
-                        loc10.Add(index_id, loc11 = new List<DbColumnInfo>());
-                    loc11.Add(loc9);
+                        loc10.Add(index_id, loc11 = new DbIndexInfo());
+                    loc11.Columns.Add(new DbIndexColumnInfo { Column = loc9, IsDesc = is_desc });
                     if (is_unique && !is_primary_key)
                     {
                         if (!uniqueColumns.TryGetValue(object_id, out loc10))
-                            uniqueColumns.Add(object_id, loc10 = new Dictionary<string, List<DbColumnInfo>>());
+                            uniqueColumns.Add(object_id, loc10 = new Dictionary<string, DbIndexInfo>());
                         if (!loc10.TryGetValue(index_id, out loc11))
-                            loc10.Add(index_id, loc11 = new List<DbColumnInfo>());
-                        loc11.Add(loc9);
+                            loc10.Add(index_id, loc11 = new DbIndexInfo());
+                        loc11.Columns.Add(new DbIndexColumnInfo { Column = loc9, IsDesc = is_desc });
                     }
                 }
                 foreach (var object_id in indexColumns.Keys)
@@ -327,7 +356,7 @@ use [{olddatabase}];
                 {
                     foreach (var column in uniqueColumns[object_id])
                     {
-                        column.Value.Sort((c1, c2) => c1.Name.CompareTo(c2.Name));
+                        column.Value.Columns.Sort((c1, c2) => c1.Column.Name.CompareTo(c2.Column.Name));
                         loc2[object_id].UniquesDict.Add(column.Key, column.Value);
                     }
                 }
@@ -348,7 +377,7 @@ inner join sys.tables b on b.object_id = a.parent_object_id
 inner join sys.columns c on c.object_id = a.parent_object_id and c.column_id = a.parent_column_id
 inner join sys.columns d on d.object_id = a.referenced_object_id and d.column_id = a.referenced_column_id
 left join sys.foreign_keys e on e.object_id = a.constraint_object_id
-where b.object_id in ({loc8})
+where {loc8.ToString().Replace("a.table_name", "b.object_id")}
 ;
 use [{olddatabase}];
 ";
@@ -405,14 +434,14 @@ use [{olddatabase}];
                 }
                 foreach (var loc4 in loc2.Values)
                 {
-                    if (loc4.Primarys.Count == 0 && loc4.UniquesDict.Count > 0)
-                    {
-                        foreach (var loc5 in loc4.UniquesDict.First().Value)
-                        {
-                            loc5.IsPrimary = true;
-                            loc4.Primarys.Add(loc5);
-                        }
-                    }
+                    //if (loc4.Primarys.Count == 0 && loc4.UniquesDict.Count > 0)
+                    //{
+                    //    foreach (var loc5 in loc4.UniquesDict.First().Value.Columns)
+                    //    {
+                    //        loc5.Column.IsPrimary = true;
+                    //        loc4.Primarys.Add(loc5.Column);
+                    //    }
+                    //}
                     loc4.Primarys.Sort((c1, c2) => c1.Name.CompareTo(c2.Name));
                     loc4.Columns.Sort((c1, c2) =>
                     {

@@ -12,6 +12,7 @@ using System.Data.Common;
 using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace FreeSql.PostgreSQL
@@ -258,8 +259,10 @@ and b.nspname || '.' || a.relname not in ('public.geography_columns','public.geo
                 var ds = _orm.Ado.ExecuteArray(CommandType.Text, sql);
                 if (ds == null) return loc1;
 
-                var loc6 = new List<string>();
-                var loc66 = new List<string>();
+                var loc6 = new List<string[]>();
+                var loc66 = new List<string[]>();
+                var loc6_1000 = new List<string>();
+                var loc66_1000 = new List<string>();
                 foreach (object[] row in ds)
                 {
                     var object_id = string.Concat(row[0]);
@@ -273,16 +276,40 @@ and b.nspname || '.' || a.relname not in ('public.geography_columns','public.geo
                     {
                         case DbTableType.VIEW:
                         case DbTableType.TABLE:
-                            loc6.Add(object_id);
+                            loc6_1000.Add(object_id);
+                            if (loc6_1000.Count >= 500)
+                            {
+                                loc6.Add(loc6_1000.ToArray());
+                                loc6_1000.Clear();
+                            }
                             break;
                         case DbTableType.StoreProcedure:
-                            loc66.Add(object_id);
+                            loc66_1000.Add(object_id);
+                            if (loc66_1000.Count >= 500)
+                            {
+                                loc66.Add(loc66_1000.ToArray());
+                                loc66_1000.Clear();
+                            }
                             break;
                     }
                 }
+                if (loc6_1000.Count > 0) loc6.Add(loc6_1000.ToArray());
+                if (loc66_1000.Count > 0) loc66.Add(loc66_1000.ToArray());
+
                 if (loc6.Count == 0) return loc1;
-                string loc8 = "'" + string.Join("','", loc6.ToArray()) + "'";
-                string loc88 = "'" + string.Join("','", loc66.ToArray()) + "'";
+                var loc8 = new StringBuilder().Append("(");
+                for (var loc8idx = 0; loc8idx < loc6.Count; loc8idx++)
+                {
+                    if (loc8idx > 0) loc8.Append(" OR ");
+                    loc8.Append("a.table_name in (");
+                    for (var loc8idx2 = 0; loc8idx2 < loc6[loc8idx].Length; loc8idx2++)
+                    {
+                        if (loc8idx2 > 0) loc8.Append(",");
+                        loc8.Append($"'{loc6[loc8idx][loc8idx2]}'");
+                    }
+                    loc8.Append(")");
+                }
+                loc8.Append(")");
 
                 sql = $@"
 select
@@ -292,8 +319,8 @@ t.typname,
 case when a.atttypmod > 0 and a.atttypmod < 32767 then a.atttypmod - 4 else a.attlen end len,
 case when t.typelem = 0 then t.typname else t2.typname end,
 case when a.attnotnull then 0 else 1 end as is_nullable,
-e.adsrc as is_identity,
---case when e.adsrc = 'nextval(''' || case when ns.nspname = 'public' then '' else ns.nspname || '.' end || c.relname || '_' || a.attname || '_seq''::regclass)' then 1 else 0 end as is_identity,
+coalesce((select 1 from pg_sequences where sequencename = {0} || '_' || {1} || '_' || a.attname || '_sequence_name' limit 1),0) is_identity,
+--e.adsrc as is_identity,
 d.description as comment,
 a.attndims,
 case when t.typelem = 0 then t.typtype else t2.typtype end,
@@ -307,7 +334,7 @@ left join pg_description d on d.objoid = a.attrelid and d.objsubid = a.attnum
 left join pg_attrdef e on e.adrelid = a.attrelid and e.adnum = a.attnum
 inner join pg_namespace ns on ns.oid = c.relnamespace
 inner join pg_namespace ns2 on ns2.oid = t.typnamespace
-where ns.nspname || '.' || c.relname in ({loc8})";
+where {loc8.ToString().Replace("a.table_name", "ns.nspname || '.' || c.relname")}";
                 ds = _orm.Ado.ExecuteArray(CommandType.Text, sql);
                 if (ds == null) return loc1;
 
@@ -319,7 +346,7 @@ where ns.nspname || '.' || c.relname in ({loc8})";
                     var max_length = int.Parse(string.Concat(row[3]));
                     var sqlType = string.Concat(row[4]);
                     var is_nullable = string.Concat(row[5]) == "1";
-                    var is_identity = string.Concat(row[6]).StartsWith(@"nextval('") && string.Concat(row[6]).EndsWith(@"'::regclass)");
+                    var is_identity = string.Concat(row[6]) == "1"; //string.Concat(row[6]).StartsWith(@"nextval('") && string.Concat(row[6]).EndsWith(@"'::regclass)");
                     var comment = string.Concat(row[7]);
                     int attndims = int.Parse(string.Concat(row[8]));
                     string typtype = string.Concat(row[9]);
@@ -337,6 +364,14 @@ where ns.nspname || '.' || c.relname in ({loc8})";
                         if (attndims == 0) attndims++;
                     }
                     if (sqlType.StartsWith("_")) sqlType = sqlType.Substring(1);
+                    if (max_length > 0)
+                    {
+                        switch (sqlType.ToLower())
+                        {
+                            //case "numeric": sqlType += $"({max_length})"; break;
+                            case "bpchar": case "varchar": case "bytea": case "bit": case "varbit": sqlType += $"({max_length})"; break;
+                        }
+                    }
 
                     loc3[object_id].Add(column, new DbColumnInfo
                     {
@@ -362,7 +397,7 @@ b.relname as index_id,
 case when a.indisunique then 1 else 0 end IsUnique,
 case when a.indisprimary then 1 else 0 end IsPrimary,
 case when a.indisclustered then 0 else 1 end IsClustered,
-0 IsDesc,
+case when pg_index_column_has_property(b.oid, c.attnum, 'desc') = 't' then 1 else 0 end IsDesc,
 a.indkey::text,
 c.attnum
 from pg_index a
@@ -370,13 +405,13 @@ inner join pg_class b on b.oid = a.indexrelid
 inner join pg_attribute c on c.attnum > 0 and c.attrelid = b.oid
 inner join pg_namespace ns on ns.oid = b.relnamespace
 inner join pg_class d on d.oid = a.indrelid
-where ns.nspname || '.' || d.relname in ({loc8})
+where {loc8.ToString().Replace("a.table_name", "ns.nspname || '.' || d.relname")}
 ";
                 ds = _orm.Ado.ExecuteArray(CommandType.Text, sql);
                 if (ds == null) return loc1;
 
-                var indexColumns = new Dictionary<string, Dictionary<string, List<DbColumnInfo>>>();
-                var uniqueColumns = new Dictionary<string, Dictionary<string, List<DbColumnInfo>>>();
+                var indexColumns = new Dictionary<string, Dictionary<string, DbIndexInfo>>();
+                var uniqueColumns = new Dictionary<string, Dictionary<string, DbIndexInfo>>();
                 foreach (object[] row in ds)
                 {
                     var object_id = string.Concat(row[0]);
@@ -385,7 +420,7 @@ where ns.nspname || '.' || d.relname in ({loc8})
                     var is_unique = string.Concat(row[3]) == "1";
                     var is_primary_key = string.Concat(row[4]) == "1";
                     var is_clustered = string.Concat(row[5]) == "1";
-                    var is_desc = int.Parse(string.Concat(row[6]));
+                    var is_desc = string.Concat(row[6]) == "1";
                     var inkey = string.Concat(row[7]).Split(' ');
                     var attnum = int.Parse(string.Concat(row[8]));
                     attnum = int.Parse(inkey[attnum - 1]);
@@ -401,20 +436,20 @@ where ns.nspname || '.' || d.relname in ({loc8})
                     var loc9 = loc3[object_id][column];
                     if (loc9.IsPrimary == false && is_primary_key) loc9.IsPrimary = is_primary_key;
 
-                    Dictionary<string, List<DbColumnInfo>> loc10 = null;
-                    List<DbColumnInfo> loc11 = null;
+                    Dictionary<string, DbIndexInfo> loc10 = null;
+                    DbIndexInfo loc11 = null;
                     if (!indexColumns.TryGetValue(object_id, out loc10))
-                        indexColumns.Add(object_id, loc10 = new Dictionary<string, List<DbColumnInfo>>());
+                        indexColumns.Add(object_id, loc10 = new Dictionary<string, DbIndexInfo>());
                     if (!loc10.TryGetValue(index_id, out loc11))
-                        loc10.Add(index_id, loc11 = new List<DbColumnInfo>());
-                    loc11.Add(loc9);
+                        loc10.Add(index_id, loc11 = new DbIndexInfo());
+                    loc11.Columns.Add(new DbIndexColumnInfo { Column = loc9, IsDesc = is_desc });
                     if (is_unique && !is_primary_key)
                     {
                         if (!uniqueColumns.TryGetValue(object_id, out loc10))
-                            uniqueColumns.Add(object_id, loc10 = new Dictionary<string, List<DbColumnInfo>>());
+                            uniqueColumns.Add(object_id, loc10 = new Dictionary<string, DbIndexInfo>());
                         if (!loc10.TryGetValue(index_id, out loc11))
-                            loc10.Add(index_id, loc11 = new List<DbColumnInfo>());
-                        loc11.Add(loc9);
+                            loc10.Add(index_id, loc11 = new DbIndexInfo());
+                        loc11.Columns.Add(new DbIndexColumnInfo { Column = loc9, IsDesc = is_desc });
                     }
                 }
                 foreach (var object_id in indexColumns.Keys)
@@ -426,7 +461,7 @@ where ns.nspname || '.' || d.relname in ({loc8})
                 {
                     foreach (var column in uniqueColumns[object_id])
                     {
-                        column.Value.Sort((c1, c2) => c1.Name.CompareTo(c2.Name));
+                        column.Value.Columns.Sort((c1, c2) => c1.Column.Name.CompareTo(c2.Column.Name));
                         loc2[object_id].UniquesDict.Add(column.Key, column.Value);
                     }
                 }
@@ -446,7 +481,7 @@ inner join pg_class b on b.oid = a.conrelid
 inner join pg_class c on c.oid = a.confrelid
 inner join pg_namespace ns on ns.oid = b.relnamespace
 inner join pg_namespace ns2 on ns2.oid = c.relnamespace
-where ns.nspname || '.' || b.relname in ({loc8})
+where {loc8.ToString().Replace("a.table_name", "ns.nspname || '.' || b.relname")}
 ";
                 ds = _orm.Ado.ExecuteArray(CommandType.Text, sql);
                 if (ds == null) return loc1;
@@ -493,14 +528,14 @@ where ns.nspname || '.' || b.relname in ({loc8})
                 }
                 foreach (var loc4 in loc2.Values)
                 {
-                    if (loc4.Primarys.Count == 0 && loc4.UniquesDict.Count > 0)
-                    {
-                        foreach (var loc5 in loc4.UniquesDict.First().Value)
-                        {
-                            loc5.IsPrimary = true;
-                            loc4.Primarys.Add(loc5);
-                        }
-                    }
+                    //if (loc4.Primarys.Count == 0 && loc4.UniquesDict.Count > 0)
+                    //{
+                    //    foreach (var loc5 in loc4.UniquesDict.First().Value.Columns)
+                    //    {
+                    //        loc5.Column.IsPrimary = true;
+                    //        loc4.Primarys.Add(loc5.Column);
+                    //    }
+                    //}
                     loc4.Primarys.Sort((c1, c2) => c1.Name.CompareTo(c2.Name));
                     loc4.Columns.Sort((c1, c2) =>
                     {

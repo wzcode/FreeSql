@@ -7,6 +7,7 @@ using System.Collections.Concurrent;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Threading;
 
 namespace FreeSql
 {
@@ -36,11 +37,10 @@ namespace FreeSql
         }
 
         ~DbSet() => this.Dispose();
-        bool _isdisposed = false;
+        int _disposeCounter;
         public void Dispose()
         {
-            if (_isdisposed) return;
-            _isdisposed = true;
+            if (Interlocked.Increment(ref _disposeCounter) != 1) return;
             try
             {
                 this._dicUpdateTimes.Clear();
@@ -59,8 +59,8 @@ namespace FreeSql
         protected virtual IUpdate<TEntity> OrmUpdate(IEnumerable<TEntity> entitys) => _db.Orm.Update<TEntity>().AsType(_entityType).SetSource(entitys).WithTransaction(_uow?.GetOrBeginTransaction());
         protected virtual IDelete<TEntity> OrmDelete(object dywhere) => _db.Orm.Delete<TEntity>().AsType(_entityType).WithTransaction(_uow?.GetOrBeginTransaction()).WhereDynamic(dywhere);
 
-        internal void EnqueueToDbContext(DbContext.ExecCommandInfoType actionType, EntityState state) =>
-            _db.EnqueueAction(actionType, this, typeof(EntityState), state);
+        internal void EnqueueToDbContext(DbContext.EntityChangeType changeType, EntityState state) =>
+            _db.EnqueueAction(changeType, this, typeof(EntityState), _entityType, state);
 
         internal void IncrAffrows(int affrows) =>
             _db._affrows += affrows;
@@ -79,13 +79,14 @@ namespace FreeSql
                     var itemType = item.GetType();
                     if (itemType == typeof(object)) return;
                     if (itemType.FullName.StartsWith("Submission#")) itemType = itemType.BaseType;
+                    if (_db.Orm.CodeFirst.GetTableByEntity(itemType)?.Primarys.Any() != true) return;
                     var dbset = _db.Set(itemType);
                     dbset?.GetType().GetMethod("TrackToList", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(dbset, new object[] { list });
                     return;
                 }
                 return;
             }
-
+            if (_table?.Primarys.Any() != true) return;
             foreach (var item in ls)
             {
                 var key = _db.Orm.GetEntityKeyString(_entityType, item, false);
@@ -107,8 +108,9 @@ namespace FreeSql
         internal ConcurrentDictionary<string, EntityState> _statesInternal => _states;
         TableInfo _tablePriv;
         protected TableInfo _table => _tablePriv ?? (_tablePriv = _db.Orm.CodeFirst.GetTableByEntity(_entityType));
-        ColumnInfo[] _tableIdentitysPriv;
+        ColumnInfo[] _tableIdentitysPriv, _tableServerTimesPriv;
         protected ColumnInfo[] _tableIdentitys => _tableIdentitysPriv ?? (_tableIdentitysPriv = _table.Primarys.Where(a => a.Attribute.IsIdentity).ToArray());
+        protected ColumnInfo[] _tableServerTimes => _tableServerTimesPriv ?? (_tableServerTimesPriv = _table.Primarys.Where(a => a.Attribute.ServerTime != DateTimeKind.Unspecified).ToArray());
         protected Type _entityType = typeof(TEntity);
         public Type EntityType => _entityType;
 
@@ -117,14 +119,33 @@ namespace FreeSql
         /// </summary>
         /// <param name="entityType"></param>
         /// <returns></returns>
-        public void AsType(Type entityType)
+        public DbSet<TEntity> AsType(Type entityType)
         {
             if (entityType == typeof(object)) throw new Exception("ISelect.AsType 参数不支持指定为 object");
-            if (entityType == _entityType) return;
+            if (entityType == _entityType) return this;
             var newtb = _db.Orm.CodeFirst.GetTableByEntity(entityType);
             _entityType = entityType;
             _tablePriv = newtb ?? throw new Exception("DbSet.AsType 参数错误，请传入正确的实体类型");
             _tableIdentitysPriv = null;
+            _tableServerTimesPriv = null;
+            return this;
+        }
+
+        Dictionary<Type, DbSet<object>> _dicDbSetObjects = new Dictionary<Type, DbSet<object>>();
+        DbSet<object> GetDbSetObject(Type et)
+        {
+            if (_dicDbSetObjects.TryGetValue(et, out var tryds)) return tryds;
+            _dicDbSetObjects.Add(et, tryds = _db.Set<object>().AsType(et));
+            if (_db.InternalDicSet.TryGetValue(et, out var tryds2))
+            {
+                var copyTo = typeof(DbSet<>).MakeGenericType(et).GetMethod("StatesCopyToDbSetObject", BindingFlags.NonPublic | BindingFlags.Instance, null, new[] { typeof(DbSet<object>) }, null);
+                copyTo?.Invoke(tryds2, new object[] { tryds });
+            }
+            return tryds;
+        }
+        void StatesCopyToDbSetObject(DbSet<object> ds)
+        {
+            ds.AttachRange(_states.Values.OrderBy(a => a.Time).Select(a => a.Value).ToArray());
         }
 
         public class EntityState
@@ -227,22 +248,20 @@ namespace FreeSql
                 if (isThrow) throw new Exception($"不可添加，实体没有主键：{_db.Orm.GetEntityString(_entityType, data)}");
                 return false;
             }
-            FreeSql.Internal.CommonProvider.InsertProvider<TEntity>.AuditDataValue(this, data, _db.Orm, _table);
+            FreeSql.Internal.CommonProvider.InsertProvider<TEntity>.AuditDataValue(this, data, _db.Orm, _table, null);
             var key = _db.Orm.GetEntityKeyString(_entityType, data, true);
             if (string.IsNullOrEmpty(key))
             {
                 switch (_db.Orm.Ado.DataType)
                 {
                     case DataType.SqlServer:
+                    case DataType.OdbcSqlServer:
                     case DataType.PostgreSQL:
+                    case DataType.OdbcPostgreSQL:
                         return true;
-                    case DataType.MySql:
-                    case DataType.Oracle:
-                    case DataType.Sqlite:
+                    default:
                         if (_tableIdentitys.Length == 1 && _table.Primarys.Length == 1)
-                        {
                             return true;
-                        }
                         if (isThrow) throw new Exception($"不可添加，未设置主键的值：{_db.Orm.GetEntityString(_entityType, data)}");
                         return false;
                 }
@@ -287,7 +306,7 @@ namespace FreeSql
                 if (isThrow) throw new Exception($"不可更新，实体没有主键：{_db.Orm.GetEntityString(_entityType, data)}");
                 return false;
             }
-            FreeSql.Internal.CommonProvider.UpdateProvider<TEntity>.AuditDataValue(this, data, _db.Orm, _table);
+            FreeSql.Internal.CommonProvider.UpdateProvider<TEntity>.AuditDataValue(this, data, _db.Orm, _table, null);
             var key = _db.Orm.GetEntityKeyString(_entityType, data, false);
             if (string.IsNullOrEmpty(key))
             {

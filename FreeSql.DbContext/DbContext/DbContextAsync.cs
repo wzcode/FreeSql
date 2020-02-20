@@ -5,21 +5,19 @@ using System.Reflection;
 using System.Linq.Expressions;
 using System.Threading.Tasks;
 
+#if net40
+#else
 namespace FreeSql
 {
     partial class DbContext
     {
-
         async public virtual Task<int> SaveChangesAsync()
         {
             await ExecCommandAsync();
-            UnitOfWork?.Commit();
-            var ret = _affrows;
-            _affrows = 0;
-            return ret;
+            return SaveChangesSuccess();
         }
 
-        static Dictionary<Type, Dictionary<string, Func<object, object[], Task<int>>>> _dicExecCommandDbContextBetchAsync = new Dictionary<Type, Dictionary<string, Func<object, object[], Task<int>>>>();
+        static Dictionary<Type, Dictionary<string, Func<object, object[], Task<int>>>> _dicExecCommandDbContextBatchAsync = new Dictionary<Type, Dictionary<string, Func<object, object[], Task<int>>>>();
         async internal Task ExecCommandAsync()
         {
             if (isExecCommanding) return;
@@ -29,9 +27,9 @@ namespace FreeSql
             ExecCommandInfo oldinfo = null;
             var states = new List<object>();
 
-            Func<string, Task<int>> dbContextBetch = methodName =>
+            Func<string, Task<int>> dbContextBatch = methodName =>
             {
-                if (_dicExecCommandDbContextBetchAsync.TryGetValue(oldinfo.stateType, out var trydic) == false)
+                if (_dicExecCommandDbContextBatchAsync.TryGetValue(oldinfo.stateType, out var trydic) == false)
                     trydic = new Dictionary<string, Func<object, object[], Task<int>>>();
                 if (trydic.TryGetValue(methodName, out var tryfunc) == false)
                 {
@@ -55,19 +53,19 @@ namespace FreeSql
             };
             Func<Task> funcDelete = async () =>
             {
-                _affrows += await dbContextBetch("DbContextBetchRemoveAsync");
+                _affrows += await dbContextBatch("DbContextBatchRemoveAsync");
                 states.Clear();
             };
             Func<Task> funcInsert = async () =>
             {
-                _affrows += await dbContextBetch("DbContextBetchAddAsync");
+                _affrows += await dbContextBatch("DbContextBatchAddAsync");
                 states.Clear();
             };
             Func<bool, Task> funcUpdate = async (isLiveUpdate) =>
             {
                 var affrows = 0;
-                if (isLiveUpdate) affrows = await dbContextBetch("DbContextBetchUpdateNowAsync");
-                else affrows = await dbContextBetch("DbContextBetchUpdateAsync");
+                if (isLiveUpdate) affrows = await dbContextBatch("DbContextBatchUpdateNowAsync");
+                else affrows = await dbContextBatch("DbContextBatchUpdateAsync");
                 if (affrows == -999)
                 { //最后一个元素已被删除
                     states.RemoveAt(states.Count - 1);
@@ -96,30 +94,31 @@ namespace FreeSql
                 var isLiveUpdate = false;
 
                 if (_actions.Any() == false && states.Any() ||
-                    info != null && oldinfo.actionType != info.actionType ||
-                    info != null && oldinfo.stateType != info.stateType)
+                    info != null && oldinfo.changeType != info.changeType ||
+                    info != null && oldinfo.stateType != info.stateType ||
+                    info != null && oldinfo.entityType != info.entityType)
                 {
 
-                    if (info != null && oldinfo.actionType == info.actionType && oldinfo.stateType == info.stateType)
+                    if (info != null && oldinfo.changeType == info.changeType && oldinfo.stateType == info.stateType && oldinfo.entityType == info.entityType)
                     {
                         //最后一个，合起来发送
                         states.Add(info.state);
                         info = null;
                     }
 
-                    switch (oldinfo.actionType)
+                    switch (oldinfo.changeType)
                     {
-                        case ExecCommandInfoType.Insert:
+                        case EntityChangeType.Insert:
                             await funcInsert();
                             break;
-                        case ExecCommandInfoType.Delete:
+                        case EntityChangeType.Delete:
                             await funcDelete();
                             break;
                     }
                     isLiveUpdate = true;
                 }
 
-                if (isLiveUpdate || oldinfo.actionType == ExecCommandInfoType.Update)
+                if (isLiveUpdate || oldinfo.changeType == EntityChangeType.Update)
                 {
                     if (states.Any())
                         await funcUpdate(isLiveUpdate);
@@ -135,3 +134,4 @@ namespace FreeSql
         }
     }
 }
+#endif

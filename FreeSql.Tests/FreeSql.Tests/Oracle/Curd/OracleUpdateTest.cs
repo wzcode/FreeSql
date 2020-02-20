@@ -86,6 +86,10 @@ namespace FreeSql.Tests.Oracle
             sql = update.Set(a => a.Clicks == a.Clicks * 10 / 1).Where(a => a.Id == 1).ToSql().Replace("\r\n", "");
             Assert.Equal("UPDATE \"TB_TOPIC\" SET \"CLICKS\" = trunc(\"CLICKS\" * 10 / 1) WHERE (\"ID\" = 1)", sql);
 
+            var dt2000 = DateTime.Parse("2000-01-01");
+            sql = update.Set(a => a.Clicks == (a.CreateTime > dt2000 ? 1 : 2)).Where(a => a.Id == 1).ToSql().Replace("\r\n", "");
+            Assert.Equal("UPDATE \"TB_TOPIC\" SET \"CLICKS\" = case when \"CREATETIME\" > to_timestamp('2000-01-01 00:00:00.000000','YYYY-MM-DD HH24:MI:SS.FF6') then 1 else 2 end WHERE (\"ID\" = 1)", sql);
+
             sql = update.Set(a => a.Id == 10).Where(a => a.Id == 1).ToSql().Replace("\r\n", "");
             Assert.Equal("UPDATE \"TB_TOPIC\" SET \"ID\" = 10 WHERE (\"ID\" = 1)", sql);
         }
@@ -112,11 +116,6 @@ namespace FreeSql.Tests.Oracle
             for (var a = 0; a < 10; a++) items.Add(new Topic { Id = a + 1, Title = $"newtitle{a}", Clicks = a * 100 });
             sql = update.Where(items).SetRaw("title='newtitle'").ToSql().Replace("\r\n", "");
             Assert.Equal("UPDATE \"TB_TOPIC\" SET title='newtitle' WHERE (\"ID\" IN (1,2,3,4,5,6,7,8,9,10))", sql);
-        }
-        [Fact]
-        public void WhereExists()
-        {
-
         }
         [Fact]
         public void ExecuteAffrows()

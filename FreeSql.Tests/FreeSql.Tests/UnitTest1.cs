@@ -15,6 +15,8 @@ using Zeus;
 using Zeus.Domain.Enum;
 using System.ComponentModel.DataAnnotations;
 using System.Reflection;
+using System.Threading;
+using Newtonsoft.Json;
 
 namespace FreeSql.Tests
 {
@@ -41,6 +43,8 @@ namespace FreeSql.Tests
             public string OrderTitle { get; set; }
             public string CustomerName { get; set; }
             public DateTime TransactionDate { get; set; }
+
+            [JsonIgnore]
             public virtual List<OrderDetail> OrderDetails { get; set; }
         }
         public class OrderDetail
@@ -303,6 +307,7 @@ namespace FreeSql.Tests
             public virtual ICollection<TaskBuildInfo> Builds { get; set; }
             public Templates Templates { get; set; }
 
+            public Guid ParentId { get; set; }
             public TaskBuild Parent { get; set; }
         }
 
@@ -402,10 +407,151 @@ namespace FreeSql.Tests
             [Navigate("AuthorId")]
             public List<Post> Post { get; set; }
         }
+        public class TestGuidId
+        {
+            public Guid? Id { get; set; }
+            public string xxx { get; set; }
+            public string yyy { get; set; }
+        }
+        public class TestAddEnum
+        {
+            public Guid Id { get; set; }
+            public TestAddEnumType Type { get; set; }
+        }
+        public enum TestAddEnumType { 中国人, 日本人 }
+
+        public static AsyncLocal<Guid> TenrantId { get; set; } = new AsyncLocal<Guid>();
+
+        public class TestAddEnumEx : TestAddEnum
+        {
+            public new int Id { get; set; }
+        }
+
+        public class TestUpdateModel
+        {
+            public string F_EmpId { get; set; }
+            public TestUpdateModelEnum F_RoleType { get; set; }
+            public TestUpdateModelEnum F_UseType { get; set; }
+        }
+        public enum TestUpdateModelEnum { x1, x2, x3 }
 
         [Fact]
         public void Test1()
         {
+            var _model = new TestUpdateModel { 
+                F_EmpId = "xx11", 
+                F_RoleType = TestUpdateModelEnum.x2, 
+                F_UseType = TestUpdateModelEnum.x3 
+            };
+            var testsql2008 = g.sqlserver.Update<TestUpdateModel>()
+                .Where(a => a.F_EmpId == _model.F_EmpId)
+                .Set(a => new TestUpdateModel
+                {
+                    F_RoleType = _model.F_RoleType,
+                    F_UseType = _model.F_UseType
+                }).ToSql();
+
+
+            g.sqlserver.Select<NewsArticle>();
+
+            g.sqlite.Update<Model1>(1).NoneParameter().Set(a => a.title, null).ExecuteAffrows();
+
+            var testExNewRet1 = g.sqlite.Delete<TestAddEnumEx>().Where("1=1").ExecuteAffrows();
+            var testExNewRet2 = g.sqlite.Insert<TestAddEnumEx>(new TestAddEnumEx { Id = 1, Type = TestAddEnumType.中国人 }).ExecuteAffrows();
+            var testExNewRet3 = g.sqlite.Insert<TestAddEnumEx>(new TestAddEnumEx { Id = 2, Type = TestAddEnumType.日本人 }).ExecuteAffrows();
+            var testExNewRet4 = g.sqlite.Select<TestAddEnumEx>().ToList();
+            var testExNewRet5 = g.sqlite.Update<TestAddEnumEx>(1).Set(a => a.Type == TestAddEnumType.日本人).ExecuteAffrows();
+            var testExNewRet6 = g.sqlite.Select<TestAddEnumEx>().ToList();
+            var testExNewRet7 = g.sqlite.Delete<TestAddEnumEx>().Where("1=1").ExecuteAffrows();
+            var testExNewRet8 = g.sqlite.Select<TestAddEnumEx>().ToList();
+
+            var testBaseRet1 = g.sqlite.Delete<TestAddEnum>().Where("1=1").ExecuteAffrows();
+            var testBaseRet2 = g.sqlite.Insert<TestAddEnum>(new TestAddEnum { Type = TestAddEnumType.中国人 }).ExecuteAffrows();
+            var testBaseRet3 = g.sqlite.Insert<TestAddEnum>(new TestAddEnum { Type = TestAddEnumType.日本人 }).ExecuteAffrows();
+            var testBaseRet4 = g.sqlite.Select<TestAddEnum>().ToList();
+            var testBaseRet5 = g.sqlite.Update<TestAddEnum>(testBaseRet4[0]).Set(a => a.Type == TestAddEnumType.日本人).ExecuteAffrows();
+            var testBaseRet6 = g.sqlite.Select<TestAddEnum>().ToList();
+            var testBaseRet7 = g.sqlite.Delete<TestAddEnum>().Where("1=1").ExecuteAffrows();
+            var testBaseRet8 = g.sqlite.Select<TestAddEnum>().ToList();
+
+
+            //g.mysql.Aop.AuditValue += (_, e) =>
+            //{
+            //    if (e.AuditValueType == FreeSql.Aop.AuditValueType.Update)
+            //    {
+            //        if (e.Property.Name == "xxx")
+            //            e.Value = "xxx";
+            //    }
+            //};
+            //var tttee = g.mysql.Select<TestGuidId>().Limit(5).ToList();
+            //g.mysql.GetGuidRepository<TestGuidId>().UpdateDiy.SetSource(tttee).UpdateColumns(a => new { a.yyy }).NoneParameter().ExecuteAffrows();
+
+            //g.mysql.GlobalFilter
+            //    .Apply<TestAddEnum>("test1", a => a.Id == TenrantId.Value)
+            //    .Apply<AuthorTest>("test2", a => a.Id == 111)
+            //    .Apply<AuthorTest>("test3", a => a.Name == "11");
+
+            TenrantId.Value = Guid.NewGuid();
+            g.mysql.Select<TestAddEnum>().ToList();
+            g.mysql.Select<TestAddEnum>().DisableGlobalFilter("test1").ToList();
+            g.mysql.Select<TestAddEnum>().DisableGlobalFilter().ToList();
+
+            g.mysql.Delete<TestAddEnum>().Where(a => a.Id == Guid.Empty).ExecuteAffrows();
+            g.mysql.Delete<TestAddEnum>().DisableGlobalFilter("test1").Where(a => a.Id == Guid.Empty).ExecuteAffrows();
+            g.mysql.Delete<TestAddEnum>().DisableGlobalFilter().Where(a => a.Id == Guid.Empty).ExecuteAffrows();
+
+            g.mysql.Update<TestAddEnum>().SetSource(new TestAddEnum { Id = Guid.Empty }).ExecuteAffrows();
+            g.mysql.Update<TestAddEnum>().DisableGlobalFilter("test1").SetSource(new TestAddEnum { Id = Guid.Empty }).ExecuteAffrows();
+            g.mysql.Update<TestAddEnum>().DisableGlobalFilter().SetSource(new TestAddEnum { Id = Guid.Empty }).ExecuteAffrows();
+
+            g.sqlite.Insert(new TestGuidId { xxx = "111" }).ExecuteAffrows();
+            g.sqlite.Insert(new TestGuidId { xxx = "222" }).ExecuteAffrows();
+            var gkkdk1 = g.sqlite.Select<TestGuidId>().Where(a => true).ToList();
+            using (var testguididdb = g.sqlite.CreateDbContext())
+            {
+                var gkkdk11 = testguididdb.Set<TestGuidId>().Select.Where(a => true).ToList();
+            }
+
+            g.oracle.Insert(new TestGuidId { xxx = "111" }).ExecuteAffrows();
+            g.oracle.Insert(new TestGuidId { xxx = "222" }).ExecuteAffrows();
+            var gkkdk2 = g.oracle.Select<TestGuidId>().Where(a => true).ToList();
+            using (var testguididdb = g.sqlite.CreateDbContext())
+            {
+                var gkkdk22 = testguididdb.Set<TestGuidId>().Select.Where(a => true).ToList();
+            }
+
+            g.pgsql.Insert(new TestGuidId { xxx = "111" }).ExecuteAffrows();
+            g.pgsql.Insert(new TestGuidId { xxx = "222" }).ExecuteAffrows();
+            var gkkdk3 = g.pgsql.Select<TestGuidId>().Where(a => true).ToList();
+            using (var testguididdb = g.sqlite.CreateDbContext())
+            {
+                var gkkdk22 = testguididdb.Set<TestGuidId>().Select.Where(a => true).ToList();
+            }
+
+            g.mysql.Insert(new TestGuidId { xxx = "111" }).ExecuteAffrows();
+            g.mysql.Insert(new TestGuidId { xxx = "222" }).ExecuteAffrows();
+            var gkkdk4 = g.mysql.Select<TestGuidId>().Where(a => true).ToList();
+            using (var testguididdb = g.sqlite.CreateDbContext())
+            {
+                var gkkdk22 = testguididdb.Set<TestGuidId>().Select.Where(a => true).ToList();
+            }
+
+            g.sqlserver.Insert(new TestGuidId { xxx = "111" }).ExecuteAffrows();
+            g.sqlserver.Insert(new TestGuidId { xxx = "222" }).ExecuteAffrows();
+            var gkkdk5 = g.sqlserver.Select<TestGuidId>().Where(a => true).ToList();
+            using (var testguididdb = g.sqlite.CreateDbContext())
+            {
+                var gkkdk22 = testguididdb.Set<TestGuidId>().Select.Where(a => true).ToList();
+            }
+
+
+            var testlistinsert = new List<AuthorTest>();
+            g.sqlite.Insert(testlistinsert).ExecuteAffrows();
+
+
+
+
+            var gkjdjd = g.sqlite.Select<AuthorTest>().Where(a => a.Post.AsSelect().Count() > 0).ToList();
 
             var testrunsql1 =  g.mysql.Select<TaskBuild>().Where(a => a.OptionsEntity04 > DateTime.Now.AddDays(0).ToString("yyyyMMdd").TryTo<int>()).ToSql();
             var testrunsql2 = g.pgsql.Select<TaskBuild>().Where(a => a.OptionsEntity04 > DateTime.Now.AddDays(0).ToString("yyyyMMdd").TryTo<int>()).ToSql();
@@ -413,7 +559,6 @@ namespace FreeSql.Tests
             var testrunsql4 = g.oracle.Select<TaskBuild>().Where(a => a.OptionsEntity04 > DateTime.Now.AddDays(0).ToString("yyyyMMdd").TryTo<int>()).ToSql();
             var testrunsql5 = g.sqlite.Select<TaskBuild>().Where(a => a.OptionsEntity04 > DateTime.Now.AddDays(0).ToString("yyyyMMdd").TryTo<int>()).ToSql();
 
-            var testssargs1 = "10100";
             var testformatsql1 = g.mysql.Select<TaskBuild>().Where(a => a.NamespaceName == $"1_{10100}").ToSql();
             var testorderbysql = g.mysql.Select<TaskBuild>().OrderByDescending(a => a.OptionsEntity04 + (a.score ?? 0)).ToSql();
 
@@ -550,10 +695,10 @@ namespace FreeSql.Tests
                 .From<Templates>((a, b) => a.InnerJoin(aa => aa.TemplatesId
                   == b.Id2))
                  .GroupBy((a, b) => b.Code)
-                 .ToSql(a => new
+                 .ToSql(a => new NewsArticleDto
                  {
-                     a.Key,
-                     sss = a.Sum(a.Value.Item1.OptionsEntity04)
+                     ArticleTitle = a.Key,
+                      ChannelId = (int)a.Sum(a.Value.Item1.OptionsEntity04)
                  });
 
             var testgrpsql2 = g.sqlite.Select<TaskBuild>()
@@ -586,7 +731,14 @@ namespace FreeSql.Tests
                     OptionsEntity02 = false,
                     OptionsEntity04 = testarray[0]
                 }).ToSql();
-
+            var tbidsql3 = g.sqlite.Update<TaskBuild>().Where(a => a.TemplatesId == tbid)
+                .Set(a => new TaskBuild
+                {
+                    FileName = "111",
+                    TaskName = a.TaskName + "333",
+                    OptionsEntity02 = false,
+                    OptionsEntity04 = testarray[0]
+                }).ToSql();
 
             var dkdkdkd = g.oracle.Select<Templates>().ToList();
 
@@ -725,8 +877,6 @@ namespace FreeSql.Tests
                 .IncludeMany(a => a.TestManys.Take(1).Where(b => b.id == a.id))
                 .Where(a => a.id > 10)
                 .ToList();
-
-
 
 
 
@@ -1156,7 +1306,7 @@ namespace FreeSql.Tests
     }
 
 
-    [Table(Name = "TestInfoT1", SelectFilter = " a.id > 0")]
+    [Table(Name = "TestInfoT1")]
     class TestInfo
     {
         [Column(IsIdentity = true, IsPrimary = true)]

@@ -17,6 +17,11 @@ namespace FreeSql
         /// <param name="entityType"></param>
         /// <returns></returns>
         void AsType(Type entityType);
+
+        /// <summary>
+        /// 设置 DbContext 选项
+        /// </summary>
+        DbContextOptions DbContextOptions { get; set; }
     }
 
     public interface IBaseRepository<TEntity> : IReadOnlyRepository<TEntity>, IBasicRepository<TEntity>
@@ -24,7 +29,10 @@ namespace FreeSql
     {
         int Delete(Expression<Func<TEntity, bool>> predicate);
 
+#if net40
+#else
         Task<int> DeleteAsync(Expression<Func<TEntity, bool>> predicate);
+#endif
     }
 
     public interface IBaseRepository<TEntity, TKey> : IBaseRepository<TEntity>, IReadOnlyRepository<TEntity, TKey>, IBasicRepository<TEntity, TKey>

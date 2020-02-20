@@ -16,13 +16,9 @@ namespace FreeSql.Sqlite.Curd
         {
         }
 
-        public override int ExecuteAffrows() => base.SplitExecuteAffrows(5000, 999);
-        public override Task<int> ExecuteAffrowsAsync() => base.SplitExecuteAffrowsAsync(5000, 999);
-        public override long ExecuteIdentity() => base.SplitExecuteIdentity(5000, 999);
-        public override Task<long> ExecuteIdentityAsync() => base.SplitExecuteIdentityAsync(5000, 999);
-        public override List<T1> ExecuteInserted() => base.SplitExecuteInserted(5000, 999);
-        public override Task<List<T1>> ExecuteInsertedAsync() => base.SplitExecuteInsertedAsync(5000, 999);
-
+        public override int ExecuteAffrows() => base.SplitExecuteAffrows(_batchValuesLimit > 0 ? _batchValuesLimit : 5000, _batchParameterLimit > 0 ? _batchParameterLimit : 999);
+        public override long ExecuteIdentity() => base.SplitExecuteIdentity(_batchValuesLimit > 0 ? _batchValuesLimit : 5000, _batchParameterLimit > 0 ? _batchParameterLimit : 999);
+        public override List<T1> ExecuteInserted() => base.SplitExecuteInserted(_batchValuesLimit > 0 ? _batchValuesLimit : 5000, _batchParameterLimit > 0 ? _batchParameterLimit : 999);
 
         protected override long RawExecuteIdentity()
         {
@@ -30,7 +26,7 @@ namespace FreeSql.Sqlite.Curd
             if (string.IsNullOrEmpty(sql)) return 0;
 
             sql = string.Concat(sql, "; SELECT last_insert_rowid();");
-            var before = new Aop.CurdBeforeEventArgs(_table.Type, Aop.CurdType.Insert, sql, _params);
+            var before = new Aop.CurdBeforeEventArgs(_table.Type, _table, Aop.CurdType.Insert, sql, _params);
             _orm.Aop.CurdBefore?.Invoke(this, before);
             long ret = 0;
             Exception exception = null;
@@ -50,13 +46,30 @@ namespace FreeSql.Sqlite.Curd
             }
             return ret;
         }
+        
+        protected override List<T1> RawExecuteInserted()
+        {
+            var sql = this.ToSql();
+            if (string.IsNullOrEmpty(sql)) return new List<T1>();
+
+            var ret = _source.ToList();
+            this.RawExecuteAffrows();
+            return ret;
+        }
+
+#if net40
+#else
+        public override Task<int> ExecuteAffrowsAsync() => base.SplitExecuteAffrowsAsync(5000, 999);
+        public override Task<long> ExecuteIdentityAsync() => base.SplitExecuteIdentityAsync(5000, 999);
+        public override Task<List<T1>> ExecuteInsertedAsync() => base.SplitExecuteInsertedAsync(5000, 999);
+
         async protected override Task<long> RawExecuteIdentityAsync()
         {
             var sql = this.ToSql();
             if (string.IsNullOrEmpty(sql)) return 0;
 
             sql = string.Concat(sql, "; SELECT last_insert_rowid();");
-            var before = new Aop.CurdBeforeEventArgs(_table.Type, Aop.CurdType.Insert, sql, _params);
+            var before = new Aop.CurdBeforeEventArgs(_table.Type, _table, Aop.CurdType.Insert, sql, _params);
             _orm.Aop.CurdBefore?.Invoke(this, before);
             long ret = 0;
             Exception exception = null;
@@ -76,21 +89,15 @@ namespace FreeSql.Sqlite.Curd
             }
             return ret;
         }
-        protected override List<T1> RawExecuteInserted()
-        {
-            var sql = this.ToSql();
-            if (string.IsNullOrEmpty(sql)) return new List<T1>();
-
-            this.RawExecuteAffrows();
-            return _source;
-        }
         async protected override Task<List<T1>> RawExecuteInsertedAsync()
         {
             var sql = this.ToSql();
             if (string.IsNullOrEmpty(sql)) return new List<T1>();
 
+            var ret = _source.ToList();
             await this.RawExecuteAffrowsAsync();
-            return _source;
+            return ret;
         }
+#endif
     }
 }

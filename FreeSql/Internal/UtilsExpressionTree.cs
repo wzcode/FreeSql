@@ -38,7 +38,7 @@ namespace FreeSql.Internal
             var tbc = _cacheGetTableByEntity.GetOrAdd(common._orm.Ado.DataType, k1 => new ConcurrentDictionary<Type, TableInfo>()); //区分数据库类型缓存
             if (tbc.TryGetValue(entity, out var trytb)) return trytb;
             if (common.CodeFirst.GetDbInfo(entity) != null) return null;
-            if (typeof(IEnumerable).IsAssignableFrom(entity) && entity.IsGenericParameter == true) return null;
+            if (typeof(IEnumerable).IsAssignableFrom(entity) && entity.IsGenericType == true) return null;
             if (entity.IsArray) return null;
 
             object entityDefault = null;
@@ -51,7 +51,7 @@ namespace FreeSql.Internal
             var tbattr = common.GetEntityTableAttribute(entity);
             trytb = new TableInfo();
             trytb.Type = entity;
-            trytb.Properties = entity.GetProperties().ToDictionary(a => a.Name, a => a, StringComparer.CurrentCultureIgnoreCase);
+            trytb.Properties = entity.GetPropertiesDictIgnoreCase();
             trytb.CsName = entity.Name;
             trytb.DbName = (tbattr?.Name ?? entity.Name);
             trytb.DbOldName = tbattr?.OldName;
@@ -65,7 +65,6 @@ namespace FreeSql.Internal
                 trytb.DbName = trytb.DbName.ToUpper();
                 trytb.DbOldName = trytb.DbOldName?.ToUpper();
             }
-            trytb.SelectFilter = tbattr?.SelectFilter;
             if (tbattr != null) trytb.DisableSyncStructure = tbattr.DisableSyncStructure;
             var propsLazy = new List<(PropertyInfo, bool, bool)>();
             var propsNavObjs = new List<PropertyInfo>();
@@ -73,10 +72,10 @@ namespace FreeSql.Internal
             var columnsList = new List<ColumnInfo>();
             foreach (var p in trytb.Properties.Values)
             {
-                var setMethod = trytb.Type.GetMethod($"set_{p.Name}");
+                var setMethod = p.GetSetMethod(true); //trytb.Type.GetMethod($"set_{p.Name}");
                 var colattr = common.GetEntityColumnAttribute(entity, p);
                 var tp = common.CodeFirst.GetDbInfo(colattr?.MapType ?? p.PropertyType);
-                if (setMethod == null) // 属性没有 set自动忽略
+                if (setMethod == null || (tp == null && p.PropertyType.IsValueType)) // 属性没有 set自动忽略
                 {
                     if (colattr == null) colattr = new ColumnAttribute { IsIgnore = true };
                     else colattr.IsIgnore = true;
@@ -85,7 +84,7 @@ namespace FreeSql.Internal
                 {
                     if (common.CodeFirst.IsLazyLoading)
                     {
-                        var getIsVirtual = trytb.Type.GetMethod($"get_{p.Name}")?.IsVirtual;
+                        var getIsVirtual = p.GetGetMethod()?.IsVirtual;// trytb.Type.GetMethod($"get_{p.Name}")?.IsVirtual;
                         var setIsVirtual = setMethod?.IsVirtual;
                         if (getIsVirtual == true || setIsVirtual == true)
                             propsLazy.Add((p, getIsVirtual == true, setIsVirtual == true));
@@ -99,11 +98,7 @@ namespace FreeSql.Internal
                     {
                         Name = p.Name,
                         DbType = tp.Value.dbtypeFull,
-                        IsIdentity = false,
                         IsNullable = tp.Value.isnullable ?? true,
-                        IsPrimary = false,
-                        IsIgnore = false,
-                        Unique = null,
                         MapType = p.PropertyType
                     };
                 if (colattr._IsNullable == null) colattr._IsNullable = tp?.isnullable;
@@ -116,19 +111,11 @@ namespace FreeSql.Internal
                 else
                     colattr.DbType = colattr.DbType.ToUpper();
 
-                if (tp != null && tp.Value.isnullable == null) colattr.IsNullable = tp.Value.dbtypeFull.Contains("NOT NULL") == false;
+                if (colattr._IsNullable == null && tp != null && tp.Value.isnullable == null) colattr.IsNullable = tp.Value.dbtypeFull.Contains("NOT NULL") == false;
                 if (colattr.DbType?.Contains("NOT NULL") == true) colattr.IsNullable = false;
                 if (string.IsNullOrEmpty(colattr.Name)) colattr.Name = p.Name;
-                if (common.CodeFirst.IsSyncStructureToLower)
-                {
-                    colattr.Name = colattr.Name.ToLower();
-                    colattr.Unique = colattr.Unique?.ToLower();
-                }
-                if (common.CodeFirst.IsSyncStructureToUpper)
-                {
-                    colattr.Name = colattr.Name.ToUpper();
-                    colattr.Unique = colattr.Unique?.ToUpper();
-                }
+                if (common.CodeFirst.IsSyncStructureToLower) colattr.Name = colattr.Name.ToLower();
+                if (common.CodeFirst.IsSyncStructureToUpper) colattr.Name = colattr.Name.ToUpper();
 
                 if ((colattr.IsNullable != true || colattr.IsIdentity == true || colattr.IsPrimary == true) && colattr.DbType.Contains("NOT NULL") == false)
                 {
@@ -161,17 +148,96 @@ namespace FreeSql.Internal
                     trytb.ColumnsByCsIgnore.Add(p.Name, col);
                     continue;
                 }
-                if (entityDefault != null) colattr.DbDefautValue = trytb.Properties[p.Name].GetValue(entityDefault);
-                if (colattr.DbDefautValue != null && p.PropertyType != colattr.MapType) colattr.DbDefautValue = Utils.GetDataReaderValue(colattr.MapType, colattr.DbDefautValue);
-                if (colattr.DbDefautValue == null) colattr.DbDefautValue = tp?.defaultValue;
-                if (colattr.IsNullable == false && colattr.DbDefautValue == null)
+                object defaultValue = null;
+                if (entityDefault != null) defaultValue = trytb.Properties[p.Name].GetValue(entityDefault, null);
+                if (p.PropertyType.IsEnum)
                 {
-                    var citype = colattr.MapType.IsNullableType() ? colattr.MapType.GenericTypeArguments.FirstOrDefault() : colattr.MapType;
-                    if (citype.IsArray)
-                        colattr.DbDefautValue = Array.CreateInstance(citype, 0);
-                    else
-                        colattr.DbDefautValue = Activator.CreateInstance(citype);
+                    var isEqualsEnumValue = false;
+                    var enumValues = Enum.GetValues(p.PropertyType);
+                    for (var a = 0; a < enumValues.Length; a++)
+                        if (object.Equals(defaultValue, enumValues.GetValue(a)))
+                        {
+                            isEqualsEnumValue = true;
+                            break;
+                        }
+                    if (isEqualsEnumValue == false && enumValues.Length > 0)
+                        defaultValue = enumValues.GetValue(0);
                 }
+                if (defaultValue != null && p.PropertyType != colattr.MapType) defaultValue = Utils.GetDataReaderValue(colattr.MapType, defaultValue);
+                if (defaultValue == null) defaultValue = tp?.defaultValue;
+                if (colattr.IsNullable == false && defaultValue == null)
+                {
+                    var citype = colattr.MapType.IsNullableType() ? colattr.MapType.GetGenericArguments().FirstOrDefault() : colattr.MapType;
+                    defaultValue = citype.CreateInstanceGetDefaultValue();
+                }
+                try
+                {
+                    col.DbDefaultValue = common.GetNoneParamaterSqlValue(new List<DbParameter>(), colattr.MapType, defaultValue);
+                }
+                catch
+                {
+                    col.DbDefaultValue = "NULL";
+                }
+                //if (defaultValue != null && colattr.MapType.NullableTypeOrThis() == typeof(DateTime))
+                //{
+                //    var dt = (DateTime)defaultValue;
+                //    if (Math.Abs(dt.Subtract(DateTime.Now).TotalSeconds) < 60)
+                //        col.DbDefaultValue = common.Now;
+                //    else if (Math.Abs(dt.Subtract(DateTime.UtcNow).TotalSeconds) < 60)
+                //        col.DbDefaultValue = common.NowUtc;
+                //}
+                if (colattr.ServerTime != DateTimeKind.Unspecified && new[] { typeof(DateTime), typeof(DateTimeOffset) }.Contains(colattr.MapType.NullableTypeOrThis()))
+                {
+                    col.DbDefaultValue = colattr.ServerTime == DateTimeKind.Local ? common.Now : common.NowUtc;
+                    col.DbInsertValue = colattr.ServerTime == DateTimeKind.Local ? common.Now : common.NowUtc;
+                    col.DbUpdateValue = colattr.ServerTime == DateTimeKind.Local ? common.Now : common.NowUtc;
+                }
+                if (string.IsNullOrEmpty(colattr.InsertValueSql) == false)
+                {
+                    col.DbDefaultValue = colattr.InsertValueSql;
+                    col.DbInsertValue = colattr.InsertValueSql;
+                }
+                if (colattr.MapType == typeof(string) && colattr.StringLength != 0)
+                {
+                    int strlen = colattr.StringLength;
+                    var charPatten = @"(CHAR|CHAR2|CHARACTER)\s*(\([^\)]*\))?";
+                    switch (common._orm.Ado.DataType)
+                    {
+                        case DataType.MySql:
+                        case DataType.OdbcMySql:
+                            if (strlen < 0) colattr.DbType = "TEXT";
+                            else colattr.DbType = Regex.Replace(colattr.DbType, charPatten, $"$1({strlen})");
+                            break;
+                        case DataType.SqlServer:
+                        case DataType.OdbcSqlServer:
+                            if (strlen < 0) colattr.DbType = Regex.Replace(colattr.DbType, charPatten, $"$1(MAX)");
+                            else colattr.DbType = Regex.Replace(colattr.DbType, charPatten, $"$1({strlen})");
+                            break;
+                        case DataType.PostgreSQL:
+                        case DataType.OdbcPostgreSQL:
+                            if (strlen < 0) colattr.DbType = "TEXT";
+                            else colattr.DbType = Regex.Replace(colattr.DbType, charPatten, $"$1({strlen})");
+                            break;
+                        case DataType.Oracle:
+                        case DataType.OdbcOracle:
+                        case DataType.OdbcDameng:
+                            if (strlen < 0) colattr.DbType = Regex.Replace(colattr.DbType, charPatten, $"$1(4000)");
+                            else colattr.DbType = Regex.Replace(colattr.DbType, charPatten, $"$1({strlen})");
+                            break;
+                        case DataType.Sqlite:
+                            if (strlen < 0) colattr.DbType = "TEXT";
+                            else colattr.DbType = Regex.Replace(colattr.DbType, charPatten, $"$1({strlen})");
+                            break;
+                        case DataType.MsAccess:
+                            charPatten = @"(CHAR|CHAR2|CHARACTER|TEXT)\s*(\([^\)]*\))?";
+                            if (strlen < 0) colattr.DbType = "LONGTEXT";
+                            else colattr.DbType = Regex.Replace(colattr.DbType, charPatten, $"$1({strlen})");
+                            break;
+                    }
+                }
+
+                if (trytb.Columns.ContainsKey(colattr.Name)) throw new Exception($"ColumnAttribute.Name {colattr.Name} 重复存在，请检查（注意：不区分大小写）");
+                if (trytb.ColumnsByCs.ContainsKey(p.Name)) throw new Exception($"属性名 {p.Name} 重复存在，请检查（注意：不区分大小写）");
 
                 trytb.Columns.Add(colattr.Name, col);
                 trytb.ColumnsByCs.Add(p.Name, col);
@@ -183,27 +249,9 @@ namespace FreeSql.Internal
                 if (trytb.VersionColumn.Attribute.MapType.IsNullableType() || trytb.VersionColumn.Attribute.MapType.IsNumberType() == false)
                     throw new Exception($"属性{trytb.VersionColumn.CsName} 被标注为行锁（乐观锁）(IsVersion)，但其必须为数字类型，并且不可为 Nullable");
             }
-            trytb.Primarys = trytb.Columns.Values.Where(a => a.Attribute.IsPrimary == true).ToArray();
-            if (trytb.Primarys.Any() == false)
-            {
-                var identcol = trytb.Columns.Values.Where(a => a.Attribute.IsIdentity == true).FirstOrDefault();
-                if (identcol != null) trytb.Primarys = new[] { identcol };
-                if (trytb.Primarys.Any() == false)
-                {
-                    trytb.Primarys = trytb.Columns.Values.Where(a => string.Compare(a.Attribute.Name, "id", true) == 0).ToArray();
-                    if (trytb.Primarys.Any() == false)
-                    {
-                        trytb.Primarys = trytb.Columns.Values.Where(a => string.Compare(a.Attribute.Name, $"{trytb.DbName}id", true) == 0).ToArray();
-                        if (trytb.Primarys.Any() == false)
-                        {
-                            trytb.Primarys = trytb.Columns.Values.Where(a => string.Compare(a.Attribute.Name, $"{trytb.DbName}_id", true) == 0).ToArray();
-                        }
-                    }
-                }
-                foreach (var col in trytb.Primarys)
-                    col.Attribute.IsPrimary = true;
-            }
-            //从数据库查找主键、自增
+
+            var indexesDict = new Dictionary<string, IndexInfo>(StringComparer.CurrentCultureIgnoreCase);
+            //从数据库查找主键、自增、索引
             if (common.CodeFirst.IsConfigEntityFromDbFirst)
             {
                 try
@@ -220,37 +268,131 @@ namespace FreeSql.Internal
                         {
                             foreach (var dbident in dbtb.Identitys)
                             {
-                                if (trytb.Columns.TryGetValue(dbident.Name, out var trycol) && trycol.Attribute.MapType == dbident.CsType ||
-                                    trytb.ColumnsByCs.TryGetValue(dbident.Name, out trycol) && trycol.Attribute.MapType == dbident.CsType)
+                                if (trytb.Columns.TryGetValue(dbident.Name, out var trycol) && trycol.Attribute.MapType.NullableTypeOrThis() == dbident.CsType.NullableTypeOrThis() ||
+                                    trytb.ColumnsByCs.TryGetValue(dbident.Name, out trycol) && trycol.Attribute.MapType.NullableTypeOrThis() == dbident.CsType.NullableTypeOrThis())
                                     trycol.Attribute.IsIdentity = true;
                             }
                             foreach (var dbpk in dbtb.Primarys)
                             {
-                                if (trytb.Columns.TryGetValue(dbpk.Name, out var trycol) && trycol.Attribute.MapType == dbpk.CsType ||
-                                    trytb.ColumnsByCs.TryGetValue(dbpk.Name, out trycol) && trycol.Attribute.MapType == dbpk.CsType)
+                                if (trytb.Columns.TryGetValue(dbpk.Name, out var trycol) && trycol.Attribute.MapType.NullableTypeOrThis() == dbpk.CsType.NullableTypeOrThis() ||
+                                    trytb.ColumnsByCs.TryGetValue(dbpk.Name, out trycol) && trycol.Attribute.MapType.NullableTypeOrThis() == dbpk.CsType.NullableTypeOrThis())
                                     trycol.Attribute.IsPrimary = true;
                             }
-                            foreach (var dbuk in dbtb.UniquesDict)
+                            foreach (var dbidx in dbtb.IndexesDict)
                             {
-                                foreach (var dbcol in dbuk.Value)
+                                var indexColumns = new List<IndexColumnInfo>();
+                                foreach (var dbcol in dbidx.Value.Columns)
                                 {
-                                    if (trytb.Columns.TryGetValue(dbcol.Name, out var trycol) && trycol.Attribute.MapType == dbcol.CsType ||
-                                        trytb.ColumnsByCs.TryGetValue(dbcol.Name, out trycol) && trycol.Attribute.MapType == dbcol.CsType)
-                                        if (trycol.Attribute._Uniques?.Contains(dbuk.Key) != true)
-                                            trycol.Attribute.Unique += $"," + dbuk.Key;
+                                    if (trytb.Columns.TryGetValue(dbcol.Column.Name, out var trycol) && trycol.Attribute.MapType.NullableTypeOrThis() == dbcol.Column.CsType.NullableTypeOrThis() ||
+                                        trytb.ColumnsByCs.TryGetValue(dbcol.Column.Name, out trycol) && trycol.Attribute.MapType.NullableTypeOrThis() == dbcol.Column.CsType.NullableTypeOrThis())
+                                        indexColumns.Add(new IndexColumnInfo
+                                        {
+                                            Column = trycol,
+                                            IsDesc = dbcol.IsDesc
+                                        });
                                 }
+                                if (indexColumns.Any() == false) continue;
+                                if (indexesDict.ContainsKey(dbidx.Key)) indexesDict.Remove(dbidx.Key);
+                                indexesDict.Add(dbidx.Key, new IndexInfo
+                                {
+                                    Name = dbidx.Key,
+                                    Columns = indexColumns.ToArray(),
+                                    IsUnique = dbidx.Value.IsUnique
+                                });
                             }
                         }
                     }
                 }
                 catch { }
-                trytb.Primarys = trytb.Columns.Values.Where(a => a.Attribute.IsPrimary == true).ToArray();
             }
-            var allunique = trytb.Columns.Values.Where(a => a.Attribute._Uniques != null).SelectMany(a => a.Attribute._Uniques).Distinct();
-            trytb.Uniques = allunique.ToDictionary(a => a, a => trytb.Columns.Values.Where(b => b.Attribute._Uniques != null && b.Attribute._Uniques.Contains(a)).ToList());
+            //索引和唯一键
+            var indexes = common.GetEntityIndexAttribute(trytb.Type);
+            foreach (var index in indexes)
+            {
+                var val = index.Fields?.Trim(' ', '\t', ',');
+                if (string.IsNullOrEmpty(val)) continue;
+                var arr = val.Split(',').Select(a => a.Trim(' ', '\t').Trim()).Where(a => !string.IsNullOrEmpty(a)).ToArray();
+                if (arr.Any() == false) continue;
+                var indexColumns = new List<IndexColumnInfo>();
+                foreach (var field in arr)
+                {
+                    var idxcol = new IndexColumnInfo();
+                    if (field.EndsWith(" DESC", StringComparison.CurrentCultureIgnoreCase)) idxcol.IsDesc = true;
+                    var colname = Regex.Replace(field, " (DESC|ASC)", "", RegexOptions.IgnoreCase);
+                    if (trytb.ColumnsByCs.TryGetValue(colname, out var trycol) || trytb.Columns.TryGetValue(colname, out trycol))
+                    {
+                        idxcol.Column = trycol;
+                        indexColumns.Add(idxcol);
+                    }
+                }
+                if (indexColumns.Any() == false) continue;
+                var indexName = common.CodeFirst.IsSyncStructureToLower ? index.Name.ToLower() : (common.CodeFirst.IsSyncStructureToUpper ? index.Name.ToUpper() : index.Name);
+                if (indexesDict.ContainsKey(indexName)) indexesDict.Remove(indexName);
+                indexesDict.Add(indexName, new IndexInfo
+                {
+                    Name = indexName,
+                    Columns = indexColumns.ToArray(),
+                    IsUnique = index.IsUnique
+                });
+            }
+            trytb.Indexes = indexesDict.Values.ToArray();
             trytb.ColumnsByPosition = columnsList.Where(a => a.Attribute.Position > 0).OrderBy(a => a.Attribute.Position)
                 .Concat(columnsList.Where(a => a.Attribute.Position == 0))
                 .Concat(columnsList.Where(a => a.Attribute.Position < 0).OrderBy(a => a.Attribute.Position)).ToArray();
+
+            trytb.Primarys = trytb.Columns.Values.Where(a => a.Attribute.IsPrimary == true).ToArray();
+            if (trytb.Primarys.Any() == false)
+            {
+                trytb.Primarys = trytb.Columns.Values.Where(a => a.Attribute._IsPrimary == null && string.Compare(a.Attribute.Name, "id", true) == 0).ToArray();
+                if (trytb.Primarys.Any() == false)
+                {
+                    var identcol = trytb.Columns.Values.Where(a => a.Attribute.IsIdentity == true).FirstOrDefault();
+                    if (identcol != null) trytb.Primarys = new[] { identcol };
+                    if (trytb.Primarys.Any() == false)
+                    {
+                        trytb.Primarys = trytb.Columns.Values.Where(a => a.Attribute._IsPrimary == null && string.Compare(a.Attribute.Name, $"{trytb.DbName}id", true) == 0).ToArray();
+                        if (trytb.Primarys.Any() == false)
+                        {
+                            trytb.Primarys = trytb.Columns.Values.Where(a => a.Attribute._IsPrimary == null && string.Compare(a.Attribute.Name, $"{trytb.DbName}_id", true) == 0).ToArray();
+                        }
+                    }
+                }
+                foreach (var col in trytb.Primarys)
+                    col.Attribute.IsPrimary = true;
+            }
+            foreach (var col in trytb.Primarys)
+            {
+                col.Attribute.IsNullable = false;
+                col.Attribute.DbType = col.Attribute.DbType.Replace("NOT NULL", "");
+            }
+            foreach (var col in trytb.Columns.Values)
+            {
+                var ltp = @"\(([^\)]+)\)";
+                col.DbTypeText = Regex.Replace(col.Attribute.DbType.Replace("NOT NULL", "").Trim(), ltp, "");
+                var m = Regex.Match(col.Attribute.DbType, ltp);
+                if (m.Success == false) continue;
+                var sizeStr = m.Groups[1].Value.Trim();
+                if (string.Compare(sizeStr, "max", true) == 0)
+                {
+                    col.DbSize = -1;
+                    continue;
+                }
+                var sizeArr = sizeStr.Split(',');
+                if (int.TryParse(sizeArr[0].Trim(), out var size) == false) continue;
+                if (col.Attribute.MapType.NullableTypeOrThis() == typeof(DateTime))
+                {
+                    col.DbScale = (byte)size;
+                    continue;
+                }
+                if (sizeArr.Length == 1)
+                {
+                    col.DbSize = size;
+                    continue;
+                }
+                if (byte.TryParse(sizeArr[1], out var scale) == false) continue;
+                col.DbPrecision = (byte)size;
+                col.DbScale = scale;
+            }
             tbc.AddOrUpdate(entity, trytb, (oldkey, oldval) => trytb);
 
             #region 查找导航属性的关系、virtual 属性延时加载，动态产生新的重写类
@@ -268,10 +410,9 @@ namespace FreeSql.Internal
                     .AppendLine("using FreeSql.DataAnnotations;")
                     .AppendLine("using System.Collections.Generic;")
                     .AppendLine("using System.Linq;")
-                    .AppendLine("using Newtonsoft.Json;")
                     .AppendLine()
                     .Append("public class ").Append(trytbTypeLazyName).Append(" : ").Append(trytbTypeName).AppendLine(" {")
-                    .AppendLine("	[JsonIgnore] private IFreeSql __fsql_orm__ { get; set; }\r\n");
+                    .AppendLine("	private IFreeSql __fsql_orm__ { get; set; }\r\n");
             }
 
             var cscodeLength = cscode?.Length ?? 0;
@@ -295,7 +436,7 @@ namespace FreeSql.Internal
                 {
                     throw new Exception($"【延时加载】{trytbTypeName} 编译错误：{ex.Message}\r\n\r\n{cscode}");
                 }
-                var type = assembly.DefinedTypes.Where(a => a.FullName.EndsWith(trytbTypeLazyName)).FirstOrDefault();
+                var type = assembly.GetExportedTypes()/*.DefinedTypes*/.Where(a => a.FullName.EndsWith(trytbTypeLazyName)).FirstOrDefault();
                 trytb.TypeLazy = type;
                 trytb.TypeLazySetOrm = type.GetProperty("__fsql_orm__", BindingFlags.Instance | BindingFlags.NonPublic).GetSetMethod(true);
                 tbc.AddOrUpdate(type, trytb, (oldkey, oldval) => trytb);
@@ -308,16 +449,16 @@ namespace FreeSql.Internal
         {
             var trytbTypeName = trytb.Type.IsNested ? $"{trytb.Type.DeclaringType.Namespace?.NotNullAndConcat(".")}{trytb.Type.DeclaringType.Name}.{trytb.Type.Name}" : $"{trytb.Type.Namespace?.NotNullAndConcat(".")}{trytb.Type.Name}";
             var propTypeName = pnv.PropertyType.IsGenericType ?
-                    $"{pnv.PropertyType.Namespace?.NotNullAndConcat(".")}{pnv.PropertyType.Name.Remove(pnv.PropertyType.Name.IndexOf('`'))}<{string.Join(", ", pnv.PropertyType.GenericTypeArguments.Select(a => a.IsNested ? $"{a.DeclaringType.Namespace?.NotNullAndConcat(".")}{a.DeclaringType.Name}.{a.Name}" : $"{a.Namespace?.NotNullAndConcat(".")}{a.Name}"))}>" :
+                    $"{pnv.PropertyType.Namespace?.NotNullAndConcat(".")}{pnv.PropertyType.Name.Remove(pnv.PropertyType.Name.IndexOf('`'))}<{string.Join(", ", pnv.PropertyType.GetGenericArguments().Select(a => a.IsNested ? $"{a.DeclaringType.Namespace?.NotNullAndConcat(".")}{a.DeclaringType.Name}.{a.Name}" : $"{a.Namespace?.NotNullAndConcat(".")}{a.Name}"))}>" :
                     (pnv.PropertyType.IsNested ? $"{pnv.PropertyType.DeclaringType.Namespace?.NotNullAndConcat(".")}{pnv.PropertyType.DeclaringType.Name}.{pnv.PropertyType.Name}" : $"{pnv.PropertyType.Namespace?.NotNullAndConcat(".")}{pnv.PropertyType.Name}");
 
-            var pnvAttr = pnv.GetCustomAttribute<NavigateAttribute>();
+            var pnvAttr = common.GetEntityNavigateAttribute(trytb.Type, pnv);
             var pnvBind = pnvAttr?.Bind?.Split(',').Select(a => a.Trim()).Where(a => !string.IsNullOrEmpty(a)).ToArray();
             var nvref = new TableRef();
             nvref.Property = pnv;
 
             //List 或 ICollection，一对多、多对多
-            var propElementType = pnv.PropertyType.GenericTypeArguments.FirstOrDefault() ?? pnv.PropertyType.GetElementType();
+            var propElementType = pnv.PropertyType.GetGenericArguments().FirstOrDefault() ?? pnv.PropertyType.GetElementType();
             if (propElementType != null)
             {
                 if (typeof(IEnumerable).IsAssignableFrom(pnv.PropertyType) == false) return;
@@ -340,7 +481,7 @@ namespace FreeSql.Internal
                 {
                     if (midType != null)
                     {
-                        var midTypeProps = midType.GetProperties();
+                        var midTypeProps = midType.GetPropertiesDictIgnoreCase().Values;
                         var midTypePropsTrytb = midTypeProps.Where(a => a.PropertyType == trytb.Type).Count();
                         var midTypePropsTbref = midTypeProps.Where(a => a.PropertyType == tbref.Type).Count();
                         if (midTypePropsTrytb != 1 || midTypePropsTbref != 1) midType = null;
@@ -350,8 +491,8 @@ namespace FreeSql.Internal
                 if (pnvAttr?.ManyToMany != null)
                 {
                     isManyToMany = propElementType != trytb.Type &&
-                        tbref.Properties.Where(z => (z.Value.PropertyType.GenericTypeArguments.FirstOrDefault() == trytb.Type || z.Value.PropertyType.GetElementType() == trytb.Type) &&
-                            z.Value.GetCustomAttribute<NavigateAttribute>()?.ManyToMany == pnvAttr.ManyToMany &&
+                        tbref.Properties.Where(z => (z.Value.PropertyType.GetGenericArguments().FirstOrDefault() == trytb.Type || z.Value.PropertyType.GetElementType() == trytb.Type) &&
+                            common.GetEntityNavigateAttribute(tbref.Type, z.Value)?.ManyToMany == pnvAttr.ManyToMany &&
                             typeof(IEnumerable).IsAssignableFrom(z.Value.PropertyType)).Any();
 
                     if (isManyToMany == false)
@@ -371,7 +512,7 @@ namespace FreeSql.Internal
                 {
                     isManyToMany = propElementType != trytb.Type &&
                         pnv.Name.EndsWith($"{tbref.CsName}s", StringComparison.CurrentCultureIgnoreCase) &&
-                        tbref.Properties.Where(z => (z.Value.PropertyType.GenericTypeArguments.FirstOrDefault() == trytb.Type || z.Value.PropertyType.GetElementType() == trytb.Type) &&
+                        tbref.Properties.Where(z => (z.Value.PropertyType.GetGenericArguments().FirstOrDefault() == trytb.Type || z.Value.PropertyType.GetElementType() == trytb.Type) &&
                             z.Key.EndsWith($"{trytb.CsName}s", StringComparison.CurrentCultureIgnoreCase) &&
                             typeof(IEnumerable).IsAssignableFrom(z.Value.PropertyType)).Any();
                 }
@@ -496,7 +637,9 @@ namespace FreeSql.Internal
                                 nvref.MiddleColumns.AddRange(trytbTf.Columns);
 
                                 if (tbmid.Primarys.Any() == false)
-                                    trytbTf.Columns.Select(c => tbmid.ColumnsByCs[c.CsName].Attribute.IsPrimary = true);
+                                    foreach (var c in trytbTf.Columns)
+                                        tbmid.ColumnsByCs[c.CsName].Attribute.IsPrimary = true;
+
                                 if (isLazy)
                                 {
                                     for (var a = 0; a < trytbTf.RefColumns.Count; a++)
@@ -541,7 +684,8 @@ namespace FreeSql.Internal
                                     nvref.MiddleColumns.AddRange(tbrefTf.Columns);
 
                                     if (tbmid.Primarys.Any() == false)
-                                        tbrefTf.Columns.Select(c => tbmid.ColumnsByCs[c.CsName].Attribute.IsPrimary = true);
+                                        foreach (var c in tbrefTf.Columns)
+                                            tbmid.ColumnsByCs[c.CsName].Attribute.IsPrimary = true;
 
                                     if (isLazy)
                                     {
@@ -652,8 +796,8 @@ namespace FreeSql.Internal
                                 .Append("			if (base.").Append(pnv.Name).Append(" == null && __lazy__").Append(pnv.Name).AppendLine(" == false) {");
 
                             if (nvref.Exception == null)
-                                cscode.Append("				base.").Append(pnv.Name).Append(" = __fsql_orm__.Select<").Append(propElementType.IsNested ? $"{propElementType.DeclaringType.Namespace}.{propElementType.DeclaringType.Name}.{propElementType.Name}" : $"{propElementType.Namespace}.{propElementType.Name}")
-                                    .Append(">().Where(a => __fsql_orm__.Select<").Append(tbmid.Type.IsNested ? $"{tbmid.Type.DeclaringType.Namespace?.NotNullAndConcat(".")}{tbmid.Type.DeclaringType.Name}.{tbmid.Type.Name}" : $"{tbmid.Type.Namespace}.{tbmid.Type.Name}")
+                                cscode.Append("				base.").Append(pnv.Name).Append(" = __fsql_orm__.Select<").Append(propElementType.IsNested ? $"{propElementType.DeclaringType.Namespace?.NotNullAndConcat(".")}{propElementType.DeclaringType.Name}.{propElementType.Name}" : $"{propElementType.Namespace?.NotNullAndConcat(".")}{propElementType.Name}")
+                                    .Append(">().Where(a => __fsql_orm__.Select<").Append(tbmid.Type.IsNested ? $"{tbmid.Type.DeclaringType.Namespace?.NotNullAndConcat(".")}{tbmid.Type.DeclaringType.Name}.{tbmid.Type.Name}" : $"{tbmid.Type.Namespace?.NotNullAndConcat(".")}{tbmid.Type.Name}")
                                     .Append(">().Where(b => ").Append(lmbdWhere.ToString()).AppendLine(").Any()).ToList();")
                                     .Append("				__lazy__").Append(pnv.Name).AppendLine(" = true;");
                             else
@@ -665,7 +809,9 @@ namespace FreeSql.Internal
                         }
                         if (vp?.Item3 == true)
                         { //set 重写
-                            cscode.Append("		set => base.").Append(pnv.Name).AppendLine(" = value;");
+                            cscode.Append("		set {\r\n")
+                                .Append("			base.").Append(pnv.Name).AppendLine(" = value;")
+                                .Append("		}\r\n");
                         }
                         cscode.AppendLine("	}");
                     }
@@ -804,7 +950,9 @@ namespace FreeSql.Internal
                         }
                         if (vp?.Item3 == true)
                         { //set 重写
-                            cscode.Append("		set => base.").Append(pnv.Name).AppendLine(" = value;");
+                            cscode.Append("		set {\r\n")
+                                .Append("			base.").Append(pnv.Name).AppendLine(" = value;")
+                                .Append("		}\r\n");
                         }
                         cscode.AppendLine("	}");
                     }
@@ -973,13 +1121,28 @@ namespace FreeSql.Internal
             var type = obj.GetType();
             if (type == ttype) return new[] { (T)Convert.ChangeType(obj, type) };
             var ret = new List<T>();
-            var ps = type.GetProperties();
-            foreach (var p in ps)
+            var dic = obj as IDictionary;
+            if (dic != null)
             {
-                if (sql.IndexOf($"{paramPrefix}{p.Name}", StringComparison.CurrentCultureIgnoreCase) == -1) continue;
-                var pvalue = p.GetValue(obj);
-                if (p.PropertyType == ttype) ret.Add((T)Convert.ChangeType(pvalue, ttype));
-                else ret.Add(constructorParamter(p.Name, p.PropertyType, pvalue));
+                foreach (var key in dic.Keys)
+                {
+                    if (string.IsNullOrEmpty(paramPrefix) == false && sql.IndexOf($"{paramPrefix}{key}", StringComparison.CurrentCultureIgnoreCase) == -1) continue;
+                    var val = dic[key];
+                    var valType = val == null ? typeof(string) : val.GetType();
+                    if (valType == ttype) ret.Add((T)Convert.ChangeType(val, ttype));
+                    else ret.Add(constructorParamter(key.ToString(), valType, val));
+                }
+            }
+            else
+            {
+                var ps = type.GetPropertiesDictIgnoreCase().Values;
+                foreach (var p in ps)
+                {
+                    if (string.IsNullOrEmpty(paramPrefix) == false && sql.IndexOf($"{paramPrefix}{p.Name}", StringComparison.CurrentCultureIgnoreCase) == -1) continue;
+                    var pvalue = p.GetValue(obj, null);
+                    if (p.PropertyType == ttype) ret.Add((T)Convert.ChangeType(pvalue, ttype));
+                    else ret.Add(constructorParamter(p.Name, p.PropertyType, pvalue));
+                }
             }
             return ret.ToArray();
         }
@@ -1048,7 +1211,7 @@ namespace FreeSql.Internal
                 this.Value = value;
                 this.DataIndex = dataIndex;
             }
-            public static ConstructorInfo Constructor = typeof(RowInfo).GetConstructor(new[] { typeof(object), typeof(int) });
+            public static ConstructorInfo Constructor = typeof(RowInfo). GetConstructor(new[] { typeof(object), typeof(int) });
             public static PropertyInfo PropertyValue = typeof(RowInfo).GetProperty("Value");
             public static PropertyInfo PropertyDataIndex = typeof(RowInfo).GetProperty("DataIndex");
         }
@@ -1075,7 +1238,7 @@ namespace FreeSql.Internal
                         ), new[] { typeExp, indexesExp, rowExp, dataIndexExp, commonUtilExp }).Compile();
 
                     var typeGeneric = type;
-                    if (typeGeneric.IsNullableType()) typeGeneric = type.GenericTypeArguments.First();
+                    if (typeGeneric.IsNullableType()) typeGeneric = type.GetGenericArguments().First();
                     if (typeGeneric.IsEnum ||
                         dicExecuteArrayRowReadClassOrTuple.ContainsKey(typeGeneric))
                         return Expression.Lambda<Func<Type, int[], DbDataReader, int, CommonUtils, RowInfo>>(
@@ -1108,7 +1271,7 @@ namespace FreeSql.Internal
                                 else
                                 {
                                     var fieldtypeGeneric = field.FieldType;
-                                    if (fieldtypeGeneric.IsNullableType()) fieldtypeGeneric = fieldtypeGeneric.GenericTypeArguments.First();
+                                    if (fieldtypeGeneric.IsNullableType()) fieldtypeGeneric = fieldtypeGeneric.GetGenericArguments().First();
                                     if (fieldtypeGeneric.IsEnum ||
                                         dicExecuteArrayRowReadClassOrTuple.ContainsKey(fieldtypeGeneric)) read2ExpAssign = Expression.New(RowInfo.Constructor,
                                             GetDataReaderValueBlockExpression(field.FieldType, Expression.Call(rowExp, MethodDataReaderGetValue, dataIndexExp)),
@@ -1169,8 +1332,12 @@ namespace FreeSql.Internal
                             var expandodic = new Dictionary<string, object>();// (IDictionary<string, object>)expando;
                             var fc = row2.FieldCount;
                             for (var a = 0; a < fc; a++)
-                                //expando[row2.GetName(a)] = row2.GetValue(a);
-                                expandodic.Add(row2.GetName(a), row2.GetValue(a));
+                            {
+                                var name = row2.GetName(a);
+                                //expando[name] = row2.GetValue(a);
+                                if (expandodic.ContainsKey(name)) continue;
+                                expandodic.Add(name, row2.GetValue(a));
+                            }
                             //expando = expandodic;
                             return new RowInfo(expandodic, fc);
                         };
@@ -1190,14 +1357,15 @@ namespace FreeSql.Internal
                     var readpkvalExp = Expression.Variable(typeof(object), "isnull3val");
                     var indexesLengthExp = Expression.Variable(typeof(int), "indexesLength");
                     var blockExp = new List<Expression>();
-                    var ctor = type.GetConstructor(new Type[0]) ?? type.GetConstructors().First();
-                    var ctorParms = ctor.GetParameters();
-                    if (ctorParms.Length > 0)
+                    var newExp = type.InternalNewExpression();
+                    if (false && newExp.Arguments.Count > 0)
                     {
+                        #region 按构造参数读取数据，此功能暂时关闭
+                        /*
                         blockExp.AddRange(new Expression[] {
-                        Expression.Assign(readpknullExp, Expression.Constant(false))
-                    });
-                        foreach (var ctorParm in ctorParms)
+                            Expression.Assign(readpknullExp, Expression.Constant(false))
+                        });
+                        foreach (var ctorParm in newExp.Constructor.GetParameters())
                         {
                             if (typetb.ColumnsByCsIgnore.ContainsKey(ctorParm.Name)) continue;
                             var readType = typetb.ColumnsByCs.TryGetValue(ctorParm.Name, out var trycol) ? trycol.Attribute.MapType : ctorParm.ParameterType;
@@ -1213,7 +1381,7 @@ namespace FreeSql.Internal
                             else
                             {
                                 var proptypeGeneric = readType;
-                                if (proptypeGeneric.IsNullableType()) proptypeGeneric = proptypeGeneric.GenericTypeArguments.First();
+                                if (proptypeGeneric.IsNullableType()) proptypeGeneric = proptypeGeneric.GetGenericArguments().First();
                                 if (proptypeGeneric.IsEnum ||
                                     dicExecuteArrayRowReadClassOrTuple.ContainsKey(proptypeGeneric))
                                 {
@@ -1267,35 +1435,37 @@ namespace FreeSql.Internal
                             );
 
                             blockExp.AddRange(new Expression[] {
-                            Expression.Assign(tryidxExp, dataIndexExp),
-                            readVal,
-                            Expression.Assign(readExp, readExpAssign),
-                            Expression.IfThen(Expression.GreaterThan(readExpDataIndex, dataIndexExp),
-                                Expression.Assign(dataIndexExp, readExpDataIndex)
-                            ),
-                            Expression.Block(ispkExp)
-                        });
+                                Expression.Assign(tryidxExp, dataIndexExp),
+                                readVal,
+                                Expression.Assign(readExp, readExpAssign),
+                                Expression.IfThen(Expression.GreaterThan(readExpDataIndex, dataIndexExp),
+                                    Expression.Assign(dataIndexExp, readExpDataIndex)
+                                ),
+                                Expression.Block(ispkExp)
+                            });
                         }
                         blockExp.Add(
                             Expression.IfThen(
                                 Expression.IsFalse(readpknullExp),
-                                Expression.Assign(retExp, Expression.New(ctor, readExpValueParms))
+                                Expression.Assign(retExp, Expression.New(newExp.Constructor, readExpValueParms))
                             )
                         );
+                        */
+                        #endregion
                     }
                     else
                     {
                         blockExp.AddRange(new Expression[] {
-                        Expression.Assign(retExp, Expression.New(ctor)),
-                        Expression.Assign(indexesLengthExp, Expression.Constant(0)),
-                        Expression.IfThen(
-                            Expression.NotEqual(indexesExp, Expression.Constant(null)),
-                            Expression.Assign(indexesLengthExp, Expression.ArrayLength(indexesExp))
-                        ),
-                        Expression.Assign(readpknullExp, Expression.Constant(false))
-                    });
+                            Expression.Assign(retExp, newExp),
+                            Expression.Assign(indexesLengthExp, Expression.Constant(0)),
+                            Expression.IfThen(
+                                Expression.NotEqual(indexesExp, Expression.Constant(null)),
+                                Expression.Assign(indexesLengthExp, Expression.ArrayLength(indexesExp))
+                            ),
+                            Expression.Assign(readpknullExp, Expression.Constant(false))
+                        });
 
-                        var props = type.GetProperties();//.ToDictionary(a => a.Name, a => a, StringComparer.CurrentCultureIgnoreCase);
+                        var props = type.GetPropertiesDictIgnoreCase().Values;
                         var propIndex = 0;
                         foreach (var prop in props)
                         {
@@ -1307,7 +1477,7 @@ namespace FreeSql.Internal
                             var readType = typetb.ColumnsByCs.TryGetValue(prop.Name, out var trycol) ? trycol.Attribute.MapType : prop.PropertyType;
 
                             var ispkExp = new List<Expression>();
-                            var propGetSetMethod = prop.GetSetMethod();
+                            var propGetSetMethod = prop.GetSetMethod(true);
                             Expression readVal = Expression.Assign(readpkvalExp, Expression.Call(rowExp, MethodDataReaderGetValue, tryidxExp));
                             Expression readExpAssign = null; //加速缓存
                             if (readType.IsArray) readExpAssign = Expression.New(RowInfo.Constructor,
@@ -1318,7 +1488,7 @@ namespace FreeSql.Internal
                             else
                             {
                                 var proptypeGeneric = readType;
-                                if (proptypeGeneric.IsNullableType()) proptypeGeneric = proptypeGeneric.GenericTypeArguments.First();
+                                if (proptypeGeneric.IsNullableType()) proptypeGeneric = proptypeGeneric.GetGenericArguments().First();
                                 if (proptypeGeneric.IsEnum ||
                                     dicExecuteArrayRowReadClassOrTuple.ContainsKey(proptypeGeneric))
                                 {
@@ -1372,30 +1542,30 @@ namespace FreeSql.Internal
                                 )
                             );
                             blockExp.AddRange(new Expression[] {
-							//以下注释部分为【严格读取】，会损失一点性能，使用 select * from xxx 与属性映射赋值
-							Expression.IfThenElse(
-                                Expression.LessThan(Expression.Constant(propIndex), indexesLengthExp),
-                                Expression.Assign(tryidxExp, Expression.ArrayAccess(indexesExp, Expression.Constant(propIndex))),
-                                Expression.Assign(tryidxExp, dataIndexExp)
-                            ),
-                            Expression.IfThen(
-                                Expression.GreaterThanOrEqual(tryidxExp, Expression.Constant(0)),
-                                Expression.Block(
-                                    readVal,
-                                    Expression.Assign(readExp, readExpAssign),
-                                    Expression.IfThen(Expression.GreaterThan(readExpDataIndex, dataIndexExp),
-                                        Expression.Assign(dataIndexExp, readExpDataIndex)),
-                                    Expression.Block(ispkExp)
+							    //以下注释部分为【严格读取】，会损失一点性能，使用 select * from xxx 与属性映射赋值
+							    Expression.IfThenElse(
+                                    Expression.LessThan(Expression.Constant(propIndex), indexesLengthExp),
+                                    Expression.Assign(tryidxExp, Expression.ArrayAccess(indexesExp, Expression.Constant(propIndex))),
+                                    Expression.Assign(tryidxExp, dataIndexExp)
+                                ),
+                                Expression.IfThen(
+                                    Expression.GreaterThanOrEqual(tryidxExp, Expression.Constant(0)),
+                                    Expression.Block(
+                                        readVal,
+                                        Expression.Assign(readExp, readExpAssign),
+                                        Expression.IfThen(Expression.GreaterThan(readExpDataIndex, dataIndexExp),
+                                            Expression.Assign(dataIndexExp, readExpDataIndex)),
+                                        Expression.Block(ispkExp)
+                                    )
                                 )
-                            )
-                        });
+                            });
                             ++propIndex;
                         }
                     }
                     blockExp.AddRange(new Expression[] {
-                    Expression.Return(returnTarget, Expression.New(RowInfo.Constructor, retExp, dataIndexExp)),
-                    Expression.Label(returnTarget, Expression.Default(typeof(RowInfo)))
-                });
+                        Expression.Return(returnTarget, Expression.New(RowInfo.Constructor, retExp, dataIndexExp)),
+                        Expression.Label(returnTarget, Expression.Default(typeof(RowInfo)))
+                    });
                     return Expression.Lambda<Func<Type, int[], DbDataReader, int, CommonUtils, RowInfo>>(
                         Expression.Block(new[] { retExp, readExp, tryidxExp, readpknullExp, readpkvalExp, readExpsIndex, indexesLengthExp }.Concat(readExpValueParms), blockExp), new[] { typeExp, indexesExp, rowExp, dataIndexExp, commonUtilExp }).Compile();
                 });
@@ -1438,6 +1608,19 @@ namespace FreeSql.Internal
             if (obj == null) return null;
             return string.Concat(obj);
         }
+        static byte[] GuidToBytes(Guid guid)
+        {
+            var bytes = new byte[16];
+            var guidN = guid.ToString("N");
+            for (var a = 0; a < guidN.Length; a += 2)
+                bytes[a / 2] = byte.Parse($"{guidN[a]}{guidN[a + 1]}", System.Globalization.NumberStyles.HexNumber);
+            return bytes;
+        }
+        static Guid BytesToGuid(byte[] bytes)
+        {
+            if (bytes == null) return Guid.Empty;
+            return Guid.TryParse(BitConverter.ToString(bytes, 0, Math.Min(bytes.Length, 36)).Replace("-", ""), out var tryguid) ? tryguid : Guid.Empty;
+        }
 
         static ConcurrentDictionary<Type, ConcurrentDictionary<Type, Func<object, object>>> _dicGetDataReaderValue = new ConcurrentDictionary<Type, ConcurrentDictionary<Type, Func<object, object>>>();
         static MethodInfo MethodArrayGetValue = typeof(Array).GetMethod("GetValue", new[] { typeof(int) });
@@ -1464,7 +1647,12 @@ namespace FreeSql.Internal
         static MethodInfo MethodBigIntegerParse = typeof(Utils).GetMethod("ToBigInteger", BindingFlags.NonPublic | BindingFlags.Static, null, new[] { typeof(string) }, null);
         static PropertyInfo PropertyDateTimeOffsetDateTime = typeof(DateTimeOffset).GetProperty("DateTime", BindingFlags.Instance | BindingFlags.Public);
         static PropertyInfo PropertyDateTimeTicks = typeof(DateTime).GetProperty("Ticks", BindingFlags.Instance | BindingFlags.Public);
-        static ConstructorInfo CtorDateTimeOffsetArgsTicks = typeof(DateTimeOffset).GetConstructor(new[] { typeof(long), typeof(TimeSpan) });
+        static ConstructorInfo CtorDateTimeOffsetArgsTicks = typeof(DateTimeOffset). GetConstructor(new[] { typeof(long), typeof(TimeSpan) });
+        static Encoding DefaultEncoding = Encoding.UTF8;
+        static MethodInfo MethodEncodingGetBytes = typeof(Encoding).GetMethod("GetBytes", new[] { typeof(string) });
+        static MethodInfo MethodEncodingGetString = typeof(Encoding).GetMethod("GetString", new[] { typeof(byte[]) });
+        static MethodInfo MethodGuidToBytes = typeof(Utils).GetMethod("GuidToBytes", BindingFlags.NonPublic | BindingFlags.Static, null, new[] { typeof(Guid) }, null);
+        static MethodInfo MethodBytesToGuid = typeof(Utils).GetMethod("BytesToGuid", BindingFlags.NonPublic | BindingFlags.Static, null, new[] { typeof(byte[]) }, null);
 
         public static ConcurrentBag<Func<LabelTarget, Expression, Type, Expression>> GetDataReaderValueBlockExpressionSwitchTypeFullName = new ConcurrentBag<Func<LabelTarget, Expression, Type, Expression>>();
         public static ConcurrentBag<Func<LabelTarget, Expression, Expression, Type, Expression>> GetDataReaderValueBlockExpressionObjectToStringIfThenElse = new ConcurrentBag<Func<LabelTarget, Expression, Expression, Type, Expression>>();
@@ -1474,7 +1662,19 @@ namespace FreeSql.Internal
             var valueExp = Expression.Variable(typeof(object), "locvalue");
             Func<Expression> funcGetExpression = () =>
             {
-                if (type.FullName == "System.Byte[]") return Expression.Return(returnTarget, valueExp);
+                if (type.FullName == "System.Byte[]") return Expression.IfThenElse(
+                    Expression.TypeEqual(valueExp, type),
+                    Expression.Return(returnTarget, valueExp),
+                    Expression.IfThenElse(
+                        Expression.TypeEqual(valueExp, typeof(string)),
+                        Expression.Return(returnTarget, Expression.Call(Expression.Constant(DefaultEncoding), MethodEncodingGetBytes, Expression.Convert(valueExp, typeof(string)))),
+                        Expression.IfThenElse(
+                            Expression.Or(Expression.TypeEqual(valueExp, typeof(Guid)), Expression.TypeEqual(valueExp, typeof(Guid?))),
+                            Expression.Return(returnTarget, Expression.Call(MethodGuidToBytes, Expression.Convert(valueExp, typeof(Guid)))),
+                            Expression.Return(returnTarget, Expression.Call(Expression.Constant(DefaultEncoding), MethodEncodingGetBytes, Expression.Call(MethodToString, valueExp)))
+                        )
+                    )
+                );
                 if (type.IsArray)
                 {
                     var elementType = type.GetElementType();
@@ -1490,7 +1690,11 @@ namespace FreeSql.Internal
                         Expression.Block(
                             new[] { arrNewExp, arrExp, arrLenExp, arrXExp, arrReadValExp },
                             Expression.Assign(arrExp, Expression.TypeAs(valueExp, typeof(Array))),
-                            Expression.Assign(arrLenExp, Expression.Call(arrExp, MethodArrayGetLength, Expression.Constant(0))),
+                            Expression.IfThenElse(
+                                Expression.Equal(arrExp, Expression.Constant(null)),
+                                Expression.Assign(arrLenExp, Expression.Constant(0)),
+                                Expression.Assign(arrLenExp, Expression.Call(arrExp, MethodArrayGetLength, Expression.Constant(0)))
+                            ),
                             Expression.Assign(arrXExp, Expression.Constant(0)),
                             Expression.Assign(arrNewExp, Expression.NewArrayBounds(elementType, arrLenExp)),
                             Expression.Loop(
@@ -1514,7 +1718,7 @@ namespace FreeSql.Internal
                     );
                 }
                 var typeOrg = type;
-                if (type.IsNullableType()) type = type.GenericTypeArguments.First();
+                if (type.IsNullableType()) type = type.GetGenericArguments().First();
                 if (type.IsEnum)
                     return Expression.Block(
                         Expression.IfThenElse(
@@ -1737,7 +1941,8 @@ namespace FreeSql.Internal
                 Expression callToStringExp = Expression.Return(returnTarget, Expression.Convert(Expression.Call(MethodToString, valueExp), typeof(object)));
                 foreach (var toStringFunc in GetDataReaderValueBlockExpressionObjectToStringIfThenElse)
                     callToStringExp = toStringFunc(returnTarget, valueExp, callToStringExp, type);
-                Expression switchExp = null;
+                Expression switchExp = Expression.Return(returnTarget, Expression.Call(MethodConvertChangeType, valueExp, Expression.Constant(type, typeof(Type))));
+                Expression defaultRetExp = switchExp;
                 if (tryparseExp != null)
                     switchExp = Expression.Switch(
                         Expression.Constant(type),
@@ -1747,24 +1952,16 @@ namespace FreeSql.Internal
                             Expression.Constant(typeof(byte)), Expression.Constant(typeof(ushort)), Expression.Constant(typeof(uint)), Expression.Constant(typeof(ulong)),
                             Expression.Constant(typeof(double)), Expression.Constant(typeof(float)), Expression.Constant(typeof(decimal)),
                             Expression.Constant(typeof(DateTime)), Expression.Constant(typeof(DateTimeOffset))
-                        ),
-                        Expression.SwitchCase(Expression.Return(returnTarget, Expression.Call(MethodConvertChangeType, valueExp, Expression.Constant(type, typeof(Type)))), Expression.Constant(type))
+                        )
                     );
                 else if (tryparseBooleanExp != null)
                     switchExp = Expression.Switch(
                         Expression.Constant(type),
-                        Expression.SwitchCase(tryparseBooleanExp, Expression.Constant(typeof(bool))),
-                        Expression.SwitchCase(Expression.Return(returnTarget, Expression.Call(MethodConvertChangeType, valueExp, Expression.Constant(type, typeof(Type)))), Expression.Constant(type))
+                        Expression.SwitchCase(tryparseBooleanExp, Expression.Constant(typeof(bool)))
                     );
                 else if (type == typeof(string))
-                    switchExp = callToStringExp;
-                else
-                    switchExp = Expression.Return(returnTarget, Expression.Call(MethodConvertChangeType, valueExp, Expression.Constant(type, typeof(Type))));
+                    defaultRetExp = switchExp = callToStringExp;
 
-                var defaultRetExp = type == typeof(string) ?
-                    callToStringExp :
-                    Expression.Return(returnTarget, Expression.Call(MethodConvertChangeType, valueExp, Expression.Constant(type, typeof(Type))));
-                
                 return Expression.IfThenElse(
                     Expression.TypeEqual(valueExp, type),
                     Expression.Return(returnTarget, valueExp),
@@ -1778,7 +1975,19 @@ namespace FreeSql.Internal
                                 Expression.AndAlso(Expression.Equal(Expression.Constant(type), Expression.Constant(typeof(DateTimeOffset))), Expression.TypeEqual(valueExp, typeof(DateTime))),
                                 Expression.Return(returnTarget, Expression.Convert(
                                     Expression.New(CtorDateTimeOffsetArgsTicks, Expression.MakeMemberAccess(Expression.Convert(valueExp, typeof(DateTime)), PropertyDateTimeTicks), Expression.Constant(TimeSpan.Zero)), typeof(object))),
-                                defaultRetExp
+                                Expression.IfThenElse(
+                                    Expression.TypeEqual(valueExp, typeof(byte[])),
+                                    Expression.IfThenElse(
+                                        Expression.Or(Expression.Equal(Expression.Constant(type), Expression.Constant(typeof(Guid))), Expression.Equal(Expression.Constant(type), Expression.Constant(typeof(Guid?)))),
+                                        Expression.Return(returnTarget, Expression.Convert(Expression.Call(MethodBytesToGuid, Expression.Convert(valueExp, typeof(byte[]))), typeof(object))),
+                                        Expression.IfThenElse(
+                                            Expression.Equal(Expression.Constant(type), Expression.Constant(typeof(string))),
+                                            Expression.Return(returnTarget, Expression.Convert(Expression.Call(Expression.Constant(DefaultEncoding), MethodEncodingGetString, Expression.Convert(valueExp, typeof(byte[]))), typeof(object))),
+                                            defaultRetExp
+                                        )
+                                    ),
+                                    defaultRetExp
+                                )
                             )
                         )
                     )

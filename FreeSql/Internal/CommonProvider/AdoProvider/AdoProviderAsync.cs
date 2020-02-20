@@ -7,6 +7,8 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
+#if net40
+#else
 namespace FreeSql.Internal.CommonProvider
 {
     partial class AdoProvider
@@ -33,6 +35,7 @@ namespace FreeSql.Internal.CommonProvider
                     for (var a = 0; a < dr.FieldCount; a++)
                     {
                         var name = dr.GetName(a);
+                        if (dic.ContainsKey(name)) continue;
                         sbflag.Append(name).Append(":").Append(a).Append(",");
                         dic.Add(name, a);
                     }
@@ -76,6 +79,7 @@ namespace FreeSql.Internal.CommonProvider
                             for (var a = 0; a < dr.FieldCount; a++)
                             {
                                 var name = dr.GetName(a);
+                                if (dic.ContainsKey(name)) continue;
                                 sbflag.Append(name).Append(":").Append(a).Append(",");
                                 dic.Add(name, a);
                             }
@@ -92,6 +96,7 @@ namespace FreeSql.Internal.CommonProvider
                             for (var a = 0; a < dr.FieldCount; a++)
                             {
                                 var name = dr.GetName(a);
+                                if (dic.ContainsKey(name)) continue;
                                 sbflag.Append(name).Append(":").Append(a).Append(",");
                                 dic.Add(name, a);
                             }
@@ -143,6 +148,7 @@ namespace FreeSql.Internal.CommonProvider
                             for (var a = 0; a < dr.FieldCount; a++)
                             {
                                 var name = dr.GetName(a);
+                                if (dic.ContainsKey(name)) continue;
                                 sbflag.Append(name).Append(":").Append(a).Append(",");
                                 dic.Add(name, a);
                             }
@@ -159,6 +165,7 @@ namespace FreeSql.Internal.CommonProvider
                             for (var a = 0; a < dr.FieldCount; a++)
                             {
                                 var name = dr.GetName(a);
+                                if (dic.ContainsKey(name)) continue;
                                 sbflag.Append(name).Append(":").Append(a).Append(",");
                                 dic.Add(name, a);
                             }
@@ -175,6 +182,7 @@ namespace FreeSql.Internal.CommonProvider
                             for (var a = 0; a < dr.FieldCount; a++)
                             {
                                 var name = dr.GetName(a);
+                                if (dic.ContainsKey(name)) continue;
                                 sbflag.Append(name).Append(":").Append(a).Append(",");
                                 dic.Add(name, a);
                             }
@@ -232,6 +240,7 @@ namespace FreeSql.Internal.CommonProvider
                             for (var a = 0; a < dr.FieldCount; a++)
                             {
                                 var name = dr.GetName(a);
+                                if (dic.ContainsKey(name)) continue;
                                 sbflag.Append(name).Append(":").Append(a).Append(",");
                                 dic.Add(name, a);
                             }
@@ -248,6 +257,7 @@ namespace FreeSql.Internal.CommonProvider
                             for (var a = 0; a < dr.FieldCount; a++)
                             {
                                 var name = dr.GetName(a);
+                                if (dic.ContainsKey(name)) continue;
                                 sbflag.Append(name).Append(":").Append(a).Append(",");
                                 dic.Add(name, a);
                             }
@@ -264,6 +274,7 @@ namespace FreeSql.Internal.CommonProvider
                             for (var a = 0; a < dr.FieldCount; a++)
                             {
                                 var name = dr.GetName(a);
+                                if (dic.ContainsKey(name)) continue;
                                 sbflag.Append(name).Append(":").Append(a).Append(",");
                                 dic.Add(name, a);
                             }
@@ -280,6 +291,7 @@ namespace FreeSql.Internal.CommonProvider
                             for (var a = 0; a < dr.FieldCount; a++)
                             {
                                 var name = dr.GetName(a);
+                                if (dic.ContainsKey(name)) continue;
                                 sbflag.Append(name).Append(":").Append(a).Append(",");
                                 dic.Add(name, a);
                             }
@@ -343,6 +355,7 @@ namespace FreeSql.Internal.CommonProvider
                             for (var a = 0; a < dr.FieldCount; a++)
                             {
                                 var name = dr.GetName(a);
+                                if (dic.ContainsKey(name)) continue;
                                 sbflag.Append(name).Append(":").Append(a).Append(",");
                                 dic.Add(name, a);
                             }
@@ -359,6 +372,7 @@ namespace FreeSql.Internal.CommonProvider
                             for (var a = 0; a < dr.FieldCount; a++)
                             {
                                 var name = dr.GetName(a);
+                                if (dic.ContainsKey(name)) continue;
                                 sbflag.Append(name).Append(":").Append(a).Append(",");
                                 dic.Add(name, a);
                             }
@@ -375,6 +389,7 @@ namespace FreeSql.Internal.CommonProvider
                             for (var a = 0; a < dr.FieldCount; a++)
                             {
                                 var name = dr.GetName(a);
+                                if (dic.ContainsKey(name)) continue;
                                 sbflag.Append(name).Append(":").Append(a).Append(",");
                                 dic.Add(name, a);
                             }
@@ -391,6 +406,7 @@ namespace FreeSql.Internal.CommonProvider
                             for (var a = 0; a < dr.FieldCount; a++)
                             {
                                 var name = dr.GetName(a);
+                                if (dic.ContainsKey(name)) continue;
                                 sbflag.Append(name).Append(":").Append(a).Append(",");
                                 dic.Add(name, a);
                             }
@@ -407,6 +423,7 @@ namespace FreeSql.Internal.CommonProvider
                             for (var a = 0; a < dr.FieldCount; a++)
                             {
                                 var name = dr.GetName(a);
+                                if (dic.ContainsKey(name)) continue;
                                 sbflag.Append(name).Append(":").Append(a).Append(",");
                                 dic.Add(name, a);
                             }
@@ -446,7 +463,7 @@ namespace FreeSql.Internal.CommonProvider
                         //查从库
                         this.SlavePools : (
                         //查主库
-                        slaveUnavailables == this.SlavePools.Count ? new List<ObjectPool<DbConnection>>() :
+                        slaveUnavailables == this.SlavePools.Count ? new List<IObjectPool<DbConnection>>() :
                         //查从库可用
                         this.SlavePools.Where(sp => sp.IsAvailable).ToList());
                     if (availables.Any())
@@ -487,6 +504,7 @@ namespace FreeSql.Internal.CommonProvider
                         }
                         LoggerException(pool, pc, new Exception($"连接失败，准备切换其他可用服务器"), dt, logtxt, false);
                         pc.cmd.Parameters.Clear();
+                        if (DataType == DataType.Sqlite) pc.cmd.Dispose();
                         await ExecuteReaderMultipleAsync(multipleResult, connection, transaction, readerHander, cmdType, cmdText, cmdParms);
                         return;
                     }
@@ -549,6 +567,7 @@ namespace FreeSql.Internal.CommonProvider
             }
             LoggerException(pool, pc, ex, dt, logtxt);
             pc.cmd.Parameters.Clear();
+            if (DataType == DataType.Sqlite) pc.cmd.Dispose();
         }
         public Task<object[][]> ExecuteArrayAsync(string cmdText, object parms = null) => ExecuteArrayAsync(null, null, CommandType.Text, cmdText, GetDbParamtersByObject(cmdText, parms));
         public Task<object[][]> ExecuteArrayAsync(DbTransaction transaction, string cmdText, object parms = null) => ExecuteArrayAsync(null, transaction, CommandType.Text, cmdText, GetDbParamtersByObject(cmdText, parms));
@@ -581,7 +600,12 @@ namespace FreeSql.Internal.CommonProvider
                 if (ret.Tables.Count <= result)
                 {
                     dt = ret.Tables.Add();
-                    for (var a = 0; a < dr.FieldCount; a++) dt.Columns.Add(dr.GetName(a));
+                    for (var a = 0; a < dr.FieldCount; a++)
+                    {
+                        var name = dr.GetName(a);
+                        if (dt.Columns.Contains(name)) name = $"{name}_{Guid.NewGuid().ToString("N").Substring(0, 4)}";
+                        dt.Columns.Add(name);
+                    }
                 }
                 object[] values = new object[dt.Columns.Count];
                 for (int a = 0; a < values.Length; a++) if (!await dr.IsDBNullAsync(a)) values[a] = await dr.GetFieldValueAsync<object>(a);
@@ -600,7 +624,12 @@ namespace FreeSql.Internal.CommonProvider
             await ExecuteReaderAsync(connection, transaction, async dr =>
             {
                 if (ret.Columns.Count == 0)
-                    for (var a = 0; a < dr.FieldCount; a++) ret.Columns.Add(dr.GetName(a));
+                    for (var a = 0; a < dr.FieldCount; a++)
+                    {
+                        var name = dr.GetName(a);
+                        if (ret.Columns.Contains(name)) name = $"{name}_{Guid.NewGuid().ToString("N").Substring(0, 4)}";
+                        ret.Columns.Add(name);
+                    }
                 object[] values = new object[ret.Columns.Count];
                 for (int a = 0; a < values.Length; a++) if (!await dr.IsDBNullAsync(a)) values[a] = await dr.GetFieldValueAsync<object>(a);
                 ret.Rows.Add(values);
@@ -640,6 +669,7 @@ namespace FreeSql.Internal.CommonProvider
             }
             LoggerException(this.MasterPool, pc, ex, dt, logtxt);
             pc.cmd.Parameters.Clear();
+            if (DataType == DataType.Sqlite) pc.cmd.Dispose();
             return val;
         }
         public Task<object> ExecuteScalarAsync(string cmdText, object parms = null) => ExecuteScalarAsync(null, null, CommandType.Text, cmdText, GetDbParamtersByObject(cmdText, parms));
@@ -675,6 +705,7 @@ namespace FreeSql.Internal.CommonProvider
             }
             LoggerException(this.MasterPool, pc, ex, dt, logtxt);
             pc.cmd.Parameters.Clear();
+            if (DataType == DataType.Sqlite) pc.cmd.Dispose();
             return val;
         }
 
@@ -729,3 +760,4 @@ namespace FreeSql.Internal.CommonProvider
         }
     }
 }
+#endif

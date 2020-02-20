@@ -23,7 +23,8 @@ namespace FreeSql
         IDelete<T1> WithConnection(DbConnection connection);
 
         /// <summary>
-        /// lambda表达式条件，仅支持实体基础成员（不包含导航对象）
+        /// lambda表达式条件，仅支持实体基础成员（不包含导航对象）<para></para>
+        /// 若想使用导航对象，请使用 ISelect.ToDelete() 方法
         /// </summary>
         /// <param name="exp">lambda表达式条件</param>
         /// <returns></returns>
@@ -48,19 +49,19 @@ namespace FreeSql
         /// <returns></returns>
         IDelete<T1> Where(IEnumerable<T1> items);
         /// <summary>
-        /// 子查询是否存在
-        /// </summary>
-        /// <typeparam name="TEntity2"></typeparam>
-        /// <param name="select">子查询</param>
-        /// <param name="notExists">不存在</param>
-        /// <returns></returns>
-        IDelete<T1> WhereExists<TEntity2>(ISelect<TEntity2> select, bool notExists = false) where TEntity2 : class;
-        /// <summary>
         /// 传入动态对象如：主键值 | new[]{主键值1,主键值2} | TEntity1 | new[]{TEntity1,TEntity2} | new{id=1}
         /// </summary>
         /// <param name="dywhere">主键值、主键值集合、实体、实体集合、匿名对象、匿名对象集合</param>
+        /// <param name="not">是否标识为NOT</param>
         /// <returns></returns>
-        IDelete<T1> WhereDynamic(object dywhere);
+        IDelete<T1> WhereDynamic(object dywhere, bool not = false);
+
+        /// <summary>
+        /// 禁用全局过滤功能，不传参数时将禁用所有
+        /// </summary>
+        /// <param name="name">零个或多个过滤器名字</param>
+        /// <returns></returns>
+        IDelete<T1> DisableGlobalFilter(params string[] name);
 
         /// <summary>
         /// 设置表名规则，可用于分库/分表，参数1：默认表名；返回值：新表名；
@@ -84,12 +85,16 @@ namespace FreeSql
         /// </summary>
         /// <returns></returns>
         int ExecuteAffrows();
-        Task<int> ExecuteAffrowsAsync();
         /// <summary>
         /// 执行SQL语句，返回被删除的记录
         /// </summary>
         /// <returns></returns>
         List<T1> ExecuteDeleted();
+
+#if net40
+#else
+        Task<int> ExecuteAffrowsAsync();
         Task<List<T1>> ExecuteDeletedAsync();
+#endif
     }
 }

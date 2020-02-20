@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
 
@@ -32,5 +33,10 @@ namespace FreeSql
         /// 开启工作单元
         /// </summary>
         void Open();
+
+        /// <summary>
+        /// 此工作单元内的实体变化跟踪
+        /// </summary>
+        DbContext.EntityChangeReport EntityChangeReport { get; }
     }
 }

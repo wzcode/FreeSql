@@ -3,6 +3,7 @@ using System.Linq;
 
 namespace FreeSql.DataAnnotations
 {
+    [AttributeUsage(AttributeTargets.Property)]
     public class ColumnAttribute : Attribute
     {
 
@@ -16,7 +17,7 @@ namespace FreeSql.DataAnnotations
         public string OldName { get; set; }
         /// <summary>
         /// 数据库类型，如： varchar(255) <para></para>
-        /// 字符串长度，可使用特性 MaxLength(255)
+        /// 字符串长度，可使用特性 [MaxLength(255)]
         /// </summary>
         public string DbType { get; set; }
 
@@ -42,40 +43,6 @@ namespace FreeSql.DataAnnotations
         /// </summary>
         public bool IsVersion { get => _IsVersion ?? false; set => _IsVersion = value; }
 
-        internal string[] _Uniques;
-        /// <summary>
-        /// 唯一键，在多个属性指定相同的标识，代表联合键；可使用逗号分割多个 UniqueKey 名。
-        /// </summary>
-        public string Unique
-        {
-            get => _Uniques == null ? null : string.Join(", ", _Uniques);
-            set
-            {
-                if (string.IsNullOrEmpty(value))
-                {
-                    _Uniques = null;
-                    return;
-                }
-                var val = value?.Trim(' ', '\t', ',');
-                if (string.IsNullOrEmpty(val))
-                {
-                    _Uniques = null;
-                    return;
-                }
-                var arr = val.Split(',').Select(a => a.Trim(' ', '\t').Trim()).Where(a => !string.IsNullOrEmpty(a)).ToArray();
-                if (arr.Any() == false)
-                {
-                    _Uniques = null;
-                    return;
-                }
-                _Uniques = arr;
-            }
-        }
-        /// <summary>
-        /// 数据库默认值
-        /// </summary>
-        public object DbDefautValue { get; internal set; }
-
         /// <summary>
         /// 类型映射，除了可做基本的类型映射外，特别介绍的功能：<para></para>
         /// 1、将 enum 属性映射成 typeof(string)<para></para>
@@ -94,5 +61,47 @@ namespace FreeSql.DataAnnotations
         /// &lt;0时排后面，...-3,-2,-1
         /// </summary>
         public short Position { get => _Position ?? 0; set => _Position = value; }
+
+        internal bool? _CanInsert, _CanUpdate;
+        /// <summary>
+        /// 该字段是否可以插入，默认值true，指定为false插入时该字段会被忽略
+        /// </summary>
+        public bool CanInsert { get => _CanInsert ?? true; set => _CanInsert = value; }
+        /// <summary>
+        /// 该字段是否可以更新，默认值true，指定为false更新时该字段会被忽略
+        /// </summary>
+        public bool CanUpdate { get => _CanUpdate ?? true; set => _CanUpdate = value; }
+
+        /// <summary>
+        /// 标记属性为数据库服务器时间(utc/local)，在插入的时候使用类似 getdate() 执行
+        /// </summary>
+        public DateTimeKind ServerTime { get; set; }
+
+        internal int? _StringLength;
+        /// <summary>
+        /// 设置长度，针对 string 类型避免 DbType 的繁琐设置<para></para>
+        /// 提示：也可以使用 [MaxLength(100)]<para></para>
+        /// ---<para></para>
+        /// StringLength = 100 时，对应 DbType：<para></para>
+        /// MySql -> varchar(100)<para></para>
+        /// SqlServer -> nvarchar(100)<para></para>
+        /// PostgreSQL -> varchar(100)<para></para>
+        /// Oracle -> nvarchar2(100)<para></para>
+        /// Sqlite -> nvarchar(100)<para></para>
+        /// ---<para></para>
+        /// StringLength = -1 时，对应 DbType：<para></para>
+        /// MySql -> text<para></para>
+        /// SqlServer -> nvarchar(max)<para></para>
+        /// PostgreSQL -> text<para></para>
+        /// Oracle -> nvarchar2(4000)<para></para>
+        /// Sqlite -> text<para></para>
+        /// </summary>
+        public int StringLength { get => _StringLength ?? 0; set => _StringLength = value; }
+
+        /// <summary>
+        /// 执行 Insert 方法时使用此值<para></para>
+        /// 注意：如果是 getdate() 这种请可考虑使用 ServerTime，因为它对数据库间作了适配
+        /// </summary>
+        public string InsertValueSql { get; set; }
     }
 }

@@ -8,6 +8,13 @@ namespace FreeSql
 {
     public interface ISelectGrouping<TKey, TValue>
     {
+
+#if net40
+#else
+        Task<long> CountAsync();
+        Task<List<TReturn>> ToListAsync<TReturn>(Expression<Func<ISelectGroupingAggregate<TKey, TValue>, TReturn>> select);
+#endif
+
         /// <summary>
         /// 按聚合条件过滤，Where(a => a.Count() > 10)
         /// </summary>
@@ -36,7 +43,6 @@ namespace FreeSql
         /// <param name="select">选择列</param>
         /// <returns></returns>
         List<TReturn> ToList<TReturn>(Expression<Func<ISelectGroupingAggregate<TKey, TValue>, TReturn>> select);
-        Task<List<TReturn>> ToListAsync<TReturn>(Expression<Func<ISelectGroupingAggregate<TKey, TValue>, TReturn>> select);
 
         /// <summary>
         /// 【linq to sql】专用方法，不建议直接使用
@@ -49,7 +55,7 @@ namespace FreeSql
         /// <typeparam name="TReturn">返回类型</typeparam>
         /// <param name="select">选择列</param>
         /// <returns></returns>
-        string ToSql<TReturn>(Expression<Func<ISelectGroupingAggregate<TKey, TValue>, TReturn>> select);
+        string ToSql<TReturn>(Expression<Func<ISelectGroupingAggregate<TKey, TValue>, TReturn>> select, FieldAliasOptions fieldAlias = FieldAliasOptions.AsIndex);
         /// <summary>
         /// 返回即将执行的SQL语句
         /// </summary>
@@ -90,6 +96,18 @@ namespace FreeSql
         /// <param name="pageSize">每页多少</param>
         /// <returns></returns>
         ISelectGrouping<TKey, TValue> Page(int pageNumber, int pageSize);
+
+        /// <summary>
+        /// 查询的记录数量
+        /// </summary>
+        /// <returns></returns>
+        long Count();
+        /// <summary>
+        /// 查询的记录数量，以参数out形式返回
+        /// </summary>
+        /// <param name="count">返回的变量</param>
+        /// <returns></returns>
+        ISelectGrouping<TKey, TValue> Count(out long count);
     }
 
     public interface ISelectGroupingAggregate<TKey>
@@ -109,14 +127,14 @@ namespace FreeSql
         /// <typeparam name="T3"></typeparam>
         /// <param name="column"></param>
         /// <returns></returns>
-        T3 Sum<T3>(T3 column);
+        decimal Sum<T3>(T3 column);
         /// <summary>
         /// 平均值
         /// </summary>
         /// <typeparam name="T3"></typeparam>
         /// <param name="column"></param>
         /// <returns></returns>
-        T3 Avg<T3>(T3 column);
+        decimal Avg<T3>(T3 column);
         /// <summary>
         /// 最大值
         /// </summary>

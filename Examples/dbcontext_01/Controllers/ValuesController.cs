@@ -28,6 +28,11 @@ namespace dbcontext_01.Controllers
         [HttpGet]
         async public Task<string> Get()
         {
+            _orm.SetDbContextOptions(opt => {
+                opt.OnEntityChange = changeReport => {
+                    Console.WriteLine(changeReport);
+                };
+            });
 
             long id = 0;
 
@@ -150,7 +155,7 @@ namespace dbcontext_01.Controllers
 
                 using (var uow = _orm.CreateUnitOfWork())
                 {
-
+                    
                     var reposSong = uow.GetRepository<Song, int>();
                     reposSong.Where(a => a.Id > 10).ToList();
                     //查询结果，进入 states
@@ -186,33 +191,34 @@ namespace dbcontext_01.Controllers
 
 
 
-                //using (var ctx = new SongContext()) {
+                using (ctx = new SongContext())
+                {
 
-                //	var song = new Song { };
-                //	await ctx.Songs.AddAsync(song);
-                //	id = song.Id;
+                    song = new Song { };
+                    await ctx.Songs.AddAsync(song);
+                    id = song.Id;
 
-                //	var adds = Enumerable.Range(0, 100)
-                //		.Select(a => new Song { Create_time = DateTime.Now, Is_deleted = false, Title = "xxxx" + a, Url = "url222" })
-                //		.ToList();
-                //	await ctx.Songs.AddRangeAsync(adds);
+                    adds = Enumerable.Range(0, 100)
+                        .Select(a => new Song { Create_time = DateTime.Now, Is_deleted = false, Title = "xxxx" + a, Url = "url222" })
+                        .ToList();
+                    await ctx.Songs.AddRangeAsync(adds);
 
-                //	for (var a = 0; a < adds.Count; a++)
-                //		adds[a].Title = "dkdkdkdk" + a;
+                    for (var a = 0; a < adds.Count; a++)
+                        adds[a].Title = "dkdkdkdk" + a;
 
-                //	ctx.Songs.UpdateRange(adds);
+                    ctx.Songs.UpdateRange(adds);
 
-                //	ctx.Songs.RemoveRange(adds.Skip(10).Take(20).ToList());
+                    ctx.Songs.RemoveRange(adds.Skip(10).Take(20).ToList());
 
-                //	//ctx.Songs.Update(adds.First());
+                    //ctx.Songs.Update(adds.First());
 
-                //	adds.Last().Url = "skldfjlksdjglkjjcccc";
-                //	ctx.Songs.Update(adds.Last());
+                    adds.Last().Url = "skldfjlksdjglkjjcccc";
+                    ctx.Songs.Update(adds.Last());
 
-                //	//throw new Exception("回滚");
+                    //throw new Exception("回滚");
 
-                //	await ctx.SaveChangesAsync();
-                //}
+                    await ctx.SaveChangesAsync();
+                }
             }
             catch
             {

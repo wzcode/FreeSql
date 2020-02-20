@@ -12,6 +12,34 @@ namespace FreeSql.Tests.Sqlite
     {
 
         [Fact]
+        public void 表名中有点()
+        {
+            var item = new tbdot01 { name = "insert" };
+            g.sqlite.Insert(item).ExecuteAffrows();
+
+            var find = g.sqlite.Select<tbdot01>().Where(a => a.id == item.id).First();
+            Assert.NotNull(find);
+            Assert.Equal(item.id, find.id);
+            Assert.Equal("insert", find.name);
+
+            Assert.Equal(1, g.sqlite.Update<tbdot01>().Set(a => a.name == "update").Where(a => a.id == item.id).ExecuteAffrows());
+            find = g.sqlite.Select<tbdot01>().Where(a => a.id == item.id).First();
+            Assert.NotNull(find);
+            Assert.Equal(item.id, find.id);
+            Assert.Equal("update", find.name);
+
+            Assert.Equal(1, g.sqlite.Delete<tbdot01>().Where(a => a.id == item.id).ExecuteAffrows());
+            find = g.sqlite.Select<tbdot01>().Where(a => a.id == item.id).First();
+            Assert.Null(find);
+        }
+        [Table(Name = "\"sys.tbdot01\"")]
+        class tbdot01
+        {
+            public Guid id { get; set; }
+            public string name { get; set; }
+        }
+
+        [Fact]
         public void 中文表_字段()
         {
             var sql = g.sqlite.CodeFirst.GetComparisonDDLStatements<测试中文表>();
@@ -36,7 +64,11 @@ namespace FreeSql.Tests.Sqlite
 
             public string 标题 { get; set; }
 
+            [Column(ServerTime = DateTimeKind.Local, CanUpdate = false)]
             public DateTime 创建时间 { get; set; }
+
+            [Column(ServerTime = DateTimeKind.Local)]
+            public DateTime 更新时间 { get; set; }
         }
 
         [Fact]
@@ -46,17 +78,16 @@ namespace FreeSql.Tests.Sqlite
             g.sqlite.CodeFirst.SyncStructure<AddUniquesInfo>();
         }
         [Table(Name = "AddUniquesInfo2", OldName = "AddUniquesInfo")]
+        [Index("uk_phone", "phone", true)]
+        [Index("uk_group_index", "group,index", true)]
+        [Index("uk_group_index22", "group desc, index22", true)]
         class AddUniquesInfo
         {
             public Guid id { get; set; }
-            [Column(Unique = "uk_phone")]
             public string phone { get; set; }
 
-            [Column(Unique = "uk_group_index, uk_group_index22")]
             public string group { get; set; }
-            [Column(Unique = "uk_group_index")]
             public int index { get; set; }
-            [Column(Unique = "uk_group_index22")]
             public string index22 { get; set; }
         }
 
@@ -263,8 +294,12 @@ namespace FreeSql.Tests.Sqlite
             public float Float { get; set; }
             public decimal Decimal { get; set; }
             public TimeSpan TimeSpan { get; set; }
+
+            [Column(ServerTime = DateTimeKind.Local)]
             public DateTime DateTime { get; set; }
+            [Column(ServerTime = DateTimeKind.Local)]
             public DateTime DateTimeOffSet { get; set; }
+
             public byte[] Bytes { get; set; }
             public string String { get; set; }
             public Guid Guid { get; set; }
@@ -282,8 +317,12 @@ namespace FreeSql.Tests.Sqlite
             public float? FloatNullable { get; set; }
             public decimal? DecimalNullable { get; set; }
             public TimeSpan? TimeSpanNullable { get; set; }
+
+            [Column(ServerTime = DateTimeKind.Local)]
             public DateTime? DateTimeNullable { get; set; }
+            [Column(ServerTime = DateTimeKind.Local)]
             public DateTime? DateTimeOffSetNullable { get; set; }
+
             public Guid? GuidNullable { get; set; }
 
             public TableAllTypeEnumType1 Enum1 { get; set; }

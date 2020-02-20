@@ -18,17 +18,11 @@ namespace FreeSql.Sqlite.Curd
         {
         }
 
-        public override int ExecuteAffrows() => base.SplitExecuteAffrows(200, 999);
-        public override Task<int> ExecuteAffrowsAsync() => base.SplitExecuteAffrowsAsync(200, 999);
-        public override List<T1> ExecuteUpdated() => base.SplitExecuteUpdated(200, 999);
-        public override Task<List<T1>> ExecuteUpdatedAsync() => base.SplitExecuteUpdatedAsync(200, 999);
+        public override int ExecuteAffrows() => base.SplitExecuteAffrows(_batchRowsLimit > 0 ? _batchRowsLimit : 200, _batchParameterLimit > 0 ? _batchParameterLimit : 999);
+        public override List<T1> ExecuteUpdated() => base.SplitExecuteUpdated(_batchRowsLimit > 0 ? _batchRowsLimit : 200, _batchParameterLimit > 0 ? _batchParameterLimit : 999);
 
 
         protected override List<T1> RawExecuteUpdated()
-        {
-            throw new NotImplementedException();
-        }
-        protected override Task<List<T1>> RawExecuteUpdatedAsync()
         {
             throw new NotImplementedException();
         }
@@ -37,7 +31,8 @@ namespace FreeSql.Sqlite.Curd
         {
             if (_table.Primarys.Length == 1)
             {
-                caseWhen.Append(_commonUtils.QuoteReadColumn(_table.Primarys.First().Attribute.MapType, _commonUtils.QuoteSqlName(_table.Primarys.First().Attribute.Name)));
+                var pk = _table.Primarys.First();
+                caseWhen.Append(_commonUtils.QuoteReadColumn(pk.CsType, pk.Attribute.MapType, _commonUtils.QuoteSqlName(pk.Attribute.Name)));
                 return;
             }
             caseWhen.Append("CONCAT(");
@@ -45,7 +40,7 @@ namespace FreeSql.Sqlite.Curd
             foreach (var pk in _table.Primarys)
             {
                 if (pkidx > 0) caseWhen.Append(", ");
-                caseWhen.Append(_commonUtils.QuoteReadColumn(pk.Attribute.MapType, _commonUtils.QuoteSqlName(pk.Attribute.Name)));
+                caseWhen.Append(_commonUtils.QuoteReadColumn(pk.CsType, pk.Attribute.MapType, _commonUtils.QuoteSqlName(pk.Attribute.Name)));
                 ++pkidx;
             }
             caseWhen.Append(")");
@@ -68,5 +63,16 @@ namespace FreeSql.Sqlite.Curd
             }
             sb.Append(")");
         }
+
+#if net40
+#else
+        public override Task<int> ExecuteAffrowsAsync() => base.SplitExecuteAffrowsAsync(200, 999);
+        public override Task<List<T1>> ExecuteUpdatedAsync() => base.SplitExecuteUpdatedAsync(200, 999);
+
+        protected override Task<List<T1>> RawExecuteUpdatedAsync()
+        {
+            throw new NotImplementedException();
+        }
+#endif
     }
 }

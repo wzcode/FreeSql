@@ -12,17 +12,6 @@ namespace FreeSql
 {
     public interface IAop
     {
-
-        /// <summary>
-        /// 监控 ToList 返回的的数据，用于拦截重新装饰
-        /// </summary>
-        EventHandler<Aop.ToListEventArgs> ToList { get; set; }
-
-        /// <summary>
-        /// 监视 Where，包括 select/update/delete，可控制使上层不被执行。
-        /// </summary>
-        EventHandler<Aop.WhereEventArgs> Where { get; set; }
-
         /// <summary>
         /// 可自定义解析表达式
         /// </summary>
@@ -56,7 +45,7 @@ namespace FreeSql
         EventHandler<Aop.SyncStructureAfterEventArgs> SyncStructureAfter { get; set; }
 
         /// <summary>
-        /// Insert/Update自动值处理, e.Column.SetMapValue(
+        /// Insert/Update自动值处理
         /// </summary>
         EventHandler<Aop.AuditValueEventArgs> AuditValue { get; set; }
     }
@@ -64,29 +53,6 @@ namespace FreeSql
 
 namespace FreeSql.Aop
 {
-    public class ToListEventArgs : EventArgs
-    {
-        public ToListEventArgs(object list)
-        {
-            this.List = list;
-        }
-        /// <summary>
-        /// 可重新装饰的引用数据
-        /// </summary>
-        public object List { get; }
-    }
-    public class WhereEventArgs : EventArgs
-    {
-        public WhereEventArgs(params object[] parameters)
-        {
-            this.Parameters = parameters;
-        }
-        public object[] Parameters { get; }
-        /// <summary>
-        /// 可使上层不被执行这个条件
-        /// </summary>
-        public bool IsCancel { get; set; }
-    }
     public class ParseExpressionEventArgs : EventArgs
     {
         public ParseExpressionEventArgs(Expression expression, Func<Expression, string> freeParse)
@@ -115,6 +81,7 @@ namespace FreeSql.Aop
         {
             this.EntityType = entityType;
             this.ModifyResult = new TableAttribute();
+            this.ModifyIndexResult = new List<IndexAttribute>();
         }
 
         /// <summary>
@@ -125,6 +92,10 @@ namespace FreeSql.Aop
         /// 实体配置
         /// </summary>
         public TableAttribute ModifyResult { get; }
+        /// <summary>
+        /// 索引配置
+        /// </summary>
+        public List<IndexAttribute> ModifyIndexResult { get; }
     }
     public class ConfigEntityPropertyEventArgs : EventArgs
     {
@@ -151,16 +122,17 @@ namespace FreeSql.Aop
 
     public class CurdBeforeEventArgs : EventArgs
     {
-        public CurdBeforeEventArgs(Type entityType, CurdType curdType, string sql, DbParameter[] dbParms) :
-            this(Guid.NewGuid(), new Stopwatch(), entityType, curdType, sql, dbParms)
+        public CurdBeforeEventArgs(Type entityType, TableInfo table, CurdType curdType, string sql, DbParameter[] dbParms) :
+            this(Guid.NewGuid(), new Stopwatch(), entityType, table, curdType, sql, dbParms)
         {
             this.Stopwatch.Start();
         }
-        protected CurdBeforeEventArgs(Guid identifier, Stopwatch stopwatch, Type entityType, CurdType curdType, string sql, DbParameter[] dbParms)
+        protected CurdBeforeEventArgs(Guid identifier, Stopwatch stopwatch, Type entityType, TableInfo table, CurdType curdType, string sql, DbParameter[] dbParms)
         {
             this.Identifier = identifier;
             this.Stopwatch = stopwatch;
             this.EntityType = entityType;
+            this.Table = table;
             this.CurdType = curdType;
             this.Sql = sql;
             this.DbParms = dbParms;
@@ -181,6 +153,10 @@ namespace FreeSql.Aop
         /// </summary>
         public Type EntityType { get; }
         /// <summary>
+        /// 实体类型的元数据
+        /// </summary>
+        public TableInfo Table { get; set; }
+        /// <summary>
         /// 执行的 SQL
         /// </summary>
         public string Sql { get; }
@@ -193,7 +169,7 @@ namespace FreeSql.Aop
     public class CurdAfterEventArgs : CurdBeforeEventArgs
     {
         public CurdAfterEventArgs(CurdBeforeEventArgs before, Exception exception, object executeResult) :
-            base(before.Identifier, before.StopwatchInternal, before.EntityType, before.CurdType, before.Sql, before.DbParms)
+            base(before.Identifier, before.StopwatchInternal, before.EntityType, before.Table, before.CurdType, before.Sql, before.DbParms)
         {
             this.Exception = exception;
             this.ExecuteResult = executeResult;

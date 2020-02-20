@@ -2,24 +2,31 @@
 
 	<PropertyGroup>
 		<TargetFrameworks>netstandard2.0;net45</TargetFrameworks>
-		<Version>0.9.16</Version>
+		<Version>1.2.0-preview2</Version>
 		<GeneratePackageOnBuild>true</GeneratePackageOnBuild>
 		<Authors>YeXiangQin</Authors>
-		<Description>FreeSql 数据库实现，基于 MySql 5.6</Description>
+		<Description>FreeSql 数据库实现，基于 MySql 5.6，Ado.Net 驱动是 MySqlConnector</Description>
 		<PackageProjectUrl>https://github.com/2881099/FreeSql</PackageProjectUrl>
 		<RepositoryUrl>https://github.com/2881099/FreeSql</RepositoryUrl>
 		<RepositoryType>git</RepositoryType>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>
 		<PackageTags>FreeSql;ORM</PackageTags>
 		<PackageId>$(AssemblyName)</PackageId>
-        <PackageIconUrl>https://github.com/2881099/FreeSql/blob/master/logo.png?raw=true</PackageIconUrl>
+    <PackageIcon>logo.png</PackageIcon>
 		<Title>$(AssemblyName)</Title>
 		<IsPackable>true</IsPackable>
 		<GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+		<SignAssembly>true</SignAssembly>
+		<AssemblyOriginatorKeyFile>YeXiangQin.pfx</AssemblyOriginatorKeyFile>
+		<DelaySign>false</DelaySign>
 	</PropertyGroup>
 
+  <ItemGroup>
+    <None Include="../../logo.png" Pack="true" PackagePath="\" />
+  </ItemGroup>
+  
 	<ItemGroup>
-		<PackageReference Include="MySqlConnector" Version="0.56.0" />
+		<PackageReference Include="MySqlConnector" Version="0.62.0-beta6" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -33,5 +40,5 @@
 	<ItemGroup>
 		<ProjectReference Include="..\..\FreeSql\FreeSql.csproj" />
 	</ItemGroup>
-
+  
 </Project>

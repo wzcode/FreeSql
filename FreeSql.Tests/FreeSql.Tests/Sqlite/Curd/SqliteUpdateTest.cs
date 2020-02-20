@@ -91,6 +91,10 @@ namespace FreeSql.Tests.Sqlite
             sql = update.Set(a => a.Clicks == a.Clicks * 10 / 1).Where(a => a.Id == 1).ToSql().Replace("\r\n", "");
             Assert.Equal("UPDATE \"tb_topic\" SET \"Clicks\" = \"Clicks\" * 10 / 1 WHERE (\"Id\" = 1)", sql);
 
+            var dt2000 = DateTime.Parse("2000-01-01");
+            sql = update.Set(a => a.Clicks == (a.CreateTime > dt2000 ? 1 : 2)).Where(a => a.Id == 1).ToSql().Replace("\r\n", "");
+            Assert.Equal("UPDATE \"tb_topic\" SET \"Clicks\" = case when \"CreateTime\" > '2000-01-01 00:00:00' then 1 else 2 end WHERE (\"Id\" = 1)", sql);
+
             sql = update.Set(a => a.Id == 10).Where(a => a.Id == 1).ToSql().Replace("\r\n", "");
             Assert.Equal("UPDATE \"tb_topic\" SET \"Id\" = 10 WHERE (\"Id\" = 1)", sql);
         }
@@ -117,11 +121,6 @@ namespace FreeSql.Tests.Sqlite
             for (var a = 0; a < 10; a++) items.Add(new Topic { Id = a + 1, Title = $"newtitle{a}", Clicks = a * 100 });
             sql = update.Where(items).SetRaw("title='newtitle'").ToSql().Replace("\r\n", "");
             Assert.Equal("UPDATE \"tb_topic\" SET title='newtitle' WHERE (\"Id\" IN (1,2,3,4,5,6,7,8,9,10))", sql);
-        }
-        [Fact]
-        public void WhereExists()
-        {
-
         }
         [Fact]
         public void ExecuteAffrows()

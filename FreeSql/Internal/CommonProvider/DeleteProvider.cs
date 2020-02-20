@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Text;
 using System.Threading.Tasks;
@@ -19,6 +20,7 @@ namespace FreeSql.Internal.CommonProvider
         protected Func<string, string> _tableRule;
         protected StringBuilder _where = new StringBuilder();
         protected int _whereTimes = 0;
+        protected List<GlobalFilter.Item> _whereGlobalFilter;
         protected List<DbParameter> _params = new List<DbParameter>();
         protected DbTransaction _transaction;
         protected DbConnection _connection;
@@ -31,6 +33,7 @@ namespace FreeSql.Internal.CommonProvider
             _table = _commonUtils.GetTableByEntity(typeof(T1));
             this.Where(_commonUtils.WhereObject(_table, "", dywhere));
             if (_orm.CodeFirst.IsAutoSyncStructure && typeof(T1) != typeof(object)) _orm.CodeFirst.SyncStructure<T1>();
+            _whereGlobalFilter = _orm.GlobalFilter.GetFilters();
         }
 
         protected void ClearData()
@@ -38,6 +41,7 @@ namespace FreeSql.Internal.CommonProvider
             _where.Clear();
             _whereTimes = 0;
             _params.Clear();
+            _whereGlobalFilter = _orm.GlobalFilter.GetFilters();
         }
 
         public IDelete<T1> WithTransaction(DbTransaction transaction)
@@ -58,7 +62,7 @@ namespace FreeSql.Internal.CommonProvider
             var sql = this.ToSql();
             if (string.IsNullOrEmpty(sql)) return 0;
             var dbParms = _params.ToArray();
-            var before = new Aop.CurdBeforeEventArgs(_table.Type, Aop.CurdType.Delete, sql, dbParms);
+            var before = new Aop.CurdBeforeEventArgs(_table.Type, _table, Aop.CurdType.Delete, sql, dbParms);
             _orm.Aop.CurdBefore?.Invoke(this, before);
             var affrows = 0;
             Exception exception = null;
@@ -79,43 +83,12 @@ namespace FreeSql.Internal.CommonProvider
             this.ClearData();
             return affrows;
         }
-        async public Task<int> ExecuteAffrowsAsync()
-        {
-            var sql = this.ToSql();
-            if (string.IsNullOrEmpty(sql)) return 0;
-            var dbParms = _params.ToArray();
-            var before = new Aop.CurdBeforeEventArgs(_table.Type, Aop.CurdType.Delete, sql, dbParms);
-            _orm.Aop.CurdBefore?.Invoke(this, before);
-            var affrows = 0;
-            Exception exception = null;
-            try
-            {
-                affrows = await _orm.Ado.ExecuteNonQueryAsync(_connection, _transaction, CommandType.Text, sql, dbParms);
-            }
-            catch (Exception ex)
-            {
-                exception = ex;
-                throw ex;
-            }
-            finally
-            {
-                var after = new Aop.CurdAfterEventArgs(before, exception, affrows);
-                _orm.Aop.CurdAfter?.Invoke(this, after);
-            }
-            this.ClearData();
-            return affrows;
-        }
         public abstract List<T1> ExecuteDeleted();
-        public abstract Task<List<T1>> ExecuteDeletedAsync();
 
-        public IDelete<T1> Where(Expression<Func<T1, bool>> exp) => this.Where(_commonExpression.ExpressionWhereLambdaNoneForeignObject(null, _table, null, exp?.Body, null));
+        public IDelete<T1> Where(Expression<Func<T1, bool>> exp) => this.Where(_commonExpression.ExpressionWhereLambdaNoneForeignObject(null, _table, null, exp?.Body, null, _params));
         public IDelete<T1> Where(string sql, object parms = null)
         {
             if (string.IsNullOrEmpty(sql)) return this;
-            var args = new Aop.WhereEventArgs(sql, parms);
-            _orm.Aop.Where?.Invoke(this, new Aop.WhereEventArgs(sql, parms));
-            if (args.IsCancel == true) return this;
-
             if (++_whereTimes > 1) _where.Append(" AND ");
             _where.Append("(").Append(sql).Append(")");
             if (parms != null) _params.AddRange(_commonUtils.GetDbParamtersByObject(sql, parms));
@@ -123,16 +96,37 @@ namespace FreeSql.Internal.CommonProvider
         }
         public IDelete<T1> Where(T1 item) => this.Where(new[] { item });
         public IDelete<T1> Where(IEnumerable<T1> items) => this.Where(_commonUtils.WhereItems(_table, "", items));
-        public IDelete<T1> WhereExists<TEntity2>(ISelect<TEntity2> select, bool notExists = false) where TEntity2 : class => this.Where($"{(notExists ? "NOT " : "")}EXISTS({select.ToSql("1")})");
-        public IDelete<T1> WhereDynamic(object dywhere) => this.Where(_commonUtils.WhereObject(_table, "", dywhere));
+        public IDelete<T1> WhereDynamic(object dywhere, bool not = false) => not == false ?
+            this.Where(_commonUtils.WhereObject(_table, "", dywhere)) :
+            this.Where($"not({_commonUtils.WhereObject(_table, "", dywhere)})");
+
+        public IDelete<T1> DisableGlobalFilter(params string[] name)
+        {
+            if (_whereGlobalFilter.Any() == false) return this;
+            if (name?.Any() != true)
+            {
+                _whereGlobalFilter.Clear();
+                return this;
+            }
+            foreach (var n in name)
+            {
+                if (n == null) continue;
+                var idx = _whereGlobalFilter.FindIndex(a => string.Compare(a.Name, n, true) == 0);
+                if (idx == -1) continue;
+                _whereGlobalFilter.RemoveAt(idx);
+            }
+            return this;
+        }
 
         protected string TableRuleInvoke()
         {
             if (_tableRule == null) return _table.DbName;
             var newname = _tableRule(_table.DbName);
+            if (newname == _table.DbName) return _table.DbName;
             if (string.IsNullOrEmpty(newname)) return _table.DbName;
             if (_orm.CodeFirst.IsSyncStructureToLower) newname = newname.ToLower();
             if (_orm.CodeFirst.IsSyncStructureToUpper) newname = newname.ToUpper();
+            if (_orm.CodeFirst.IsAutoSyncStructure) _orm.CodeFirst.SyncStructure(_table.Type, newname);
             return newname;
         }
         public IDelete<T1> AsTable(Func<string, string> tableRule)
@@ -150,6 +144,18 @@ namespace FreeSql.Internal.CommonProvider
             return this;
         }
 
-        public string ToSql() => _whereTimes <= 0 ? null : new StringBuilder().Append("DELETE FROM ").Append(_commonUtils.QuoteSqlName(TableRuleInvoke())).Append(" WHERE ").Append(_where).ToString();
+        public string ToSql()
+        {
+            if (_whereTimes <= 0) return null;
+            var sb = new StringBuilder().Append("DELETE FROM ").Append(_commonUtils.QuoteSqlName(TableRuleInvoke())).Append(" WHERE ").Append(_where);
+
+            if (_whereGlobalFilter.Any())
+            {
+                var globalFilterCondi = _commonExpression.GetWhereCascadeSql(new SelectTableInfo { Table = _table }, _whereGlobalFilter.Select(a => a.Where).ToList());
+                if (string.IsNullOrEmpty(globalFilterCondi) == false)
+                    sb.Append(" AND ").Append(globalFilterCondi);
+            }
+            return sb.ToString();
+        }
     }
 }

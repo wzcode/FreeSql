@@ -68,21 +68,21 @@ namespace FreeSql.Tests.DataAnnotations
         {
             g.mysql.CodeFirst
                 //.ConfigEntity<TestFluenttb1>(a => {
-                //	a.Name("xxdkdkdk1").SelectFilter("a.Id22 > 0");
+                //	a.Name("xxdkdkdk1");
                 //	a.Property(b => b.Id).Name("Id22").IsIdentity(true);
                 //	a.Property(b => b.name).DbType("varchar(100)").IsNullable(true);
                 //})
 
                 .ConfigEntity(typeof(TestFluenttb1), a =>
                 {
-                    a.Name("xxdkdkdk1222").SelectFilter("a.Id22dd > 1");
+                    a.Name("xxdkdkdk1222");
                     a.Property("Id").Name("Id22dd").IsIdentity(true);
                     a.Property("Name").DbType("varchar(101)").IsNullable(true);
                 })
 
                 .ConfigEntity<TestFluenttb2>(a =>
                 {
-                    a.Name("xxdkdkdk2").SelectFilter("a.Idx > 0");
+                    a.Name("xxdkdkdk2");
                     a.Property(b => b.Id).Name("Id22").IsIdentity(true);
                     a.Property(b => b.name).DbType("varchar(100)").IsNullable(true);
                 })
@@ -125,13 +125,80 @@ namespace FreeSql.Tests.DataAnnotations
             Assert.NotNull(find);
             Assert.Equal(item.id, find.id);
         }
-
         class TestIsIgnore
         {
             public Guid id { get; set; }
 
             [Column(IsIgnore = true)]
             public bool isignore { get; set; }
+        }
+
+        [Fact]
+        public void AutoPrimary()
+        {
+            var tb1 = g.mysql.CodeFirst.GetTableByEntity(typeof(pkfalse_t1));
+            var tb2 = g.mysql.CodeFirst.GetTableByEntity(typeof(pkfalse_t2));
+            var tb3 = g.mysql.CodeFirst.GetTableByEntity(typeof(pkfalse_t3));
+
+            Assert.True(tb1.ColumnsByCs["id"].Attribute.IsPrimary);
+            Assert.False(tb2.ColumnsByCs["id"].Attribute.IsPrimary);
+            Assert.True(tb3.ColumnsByCs["id"].Attribute.IsPrimary);
+        }
+
+        class pkfalse_t1
+        {
+            public int id { get; set; }
+        }
+        class pkfalse_t2
+        {
+            [Column(IsPrimary = false)]
+            public int id { get; set; }
+        }
+        class pkfalse_t3
+        {
+            [Column(IsPrimary = true)]
+            public int id { get; set; }
+        }
+
+        [Fact]
+        public void CanInsert_CanUpdate()
+        {
+            var item = new TestCanInsert { title = "testtitle", testfield1 = 1000, testfield2 = 1000 };
+            var sql = g.mysql.Insert(item).ToSql().Replace("\r\n", "");
+            Assert.Equal("INSERT INTO `TestCanInsert`(`id`, `title`, `testfield2`) VALUES(?id_0, ?title_0, ?testfield2_0)", sql);
+
+            Assert.Equal(1, g.mysql.Insert(item).ExecuteAffrows());
+            var find = g.mysql.Select<TestCanInsert>().Where(a => a.id == item.id).First();
+            Assert.NotNull(find);
+            Assert.Equal(item.id, find.id);
+            Assert.Equal(item.title, find.title);
+            Assert.NotEqual(item.testfield1, find.testfield1);
+            Assert.Equal(0, find.testfield1);
+            Assert.Equal(item.testfield2, find.testfield2);
+
+            item.title = "testtitle_update";
+            item.testfield2 = 0;
+            sql = g.mysql.Update<TestCanInsert>().SetSource(item).ToSql().Replace("\r\n", "");
+            Assert.Equal($"UPDATE `TestCanInsert` SET `id` = ?p_0, `title` = ?p_1, `testfield1` = ?p_2 WHERE (`id` = '{item.id}')", sql);
+
+            Assert.Equal(1, g.mysql.Update<TestCanInsert>().SetSource(item).ExecuteAffrows());
+            find = g.mysql.Select<TestCanInsert>().Where(a => a.id == item.id).First();
+            Assert.NotNull(find);
+            Assert.Equal(item.id, find.id);
+            Assert.Equal(item.title, find.title);
+            Assert.Equal(item.testfield1, find.testfield1);
+            Assert.NotEqual(item.testfield2, find.testfield2);
+            Assert.Equal(1000, find.testfield1);
+        }
+        [Index("idx_xxx", "testfield1 ASC, testfield2 DESC")]
+        class TestCanInsert
+        {
+            public Guid id { get; set; }
+            public string title { get; set; }
+            [Column(CanInsert = false)]
+            public long testfield1 { get; set; }
+            [Column(CanUpdate = false)]
+            public long testfield2 { get; set; }
         }
     }
 }
